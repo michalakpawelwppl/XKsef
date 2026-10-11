@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="xKesf.Application/xKesf.Application.csproj" />
+  <Project Path="xKsef.Api/xKsef.Api.csproj" />
+  <Project Path="xKsef.Contracts/xKsef.Contracts.csproj" />
+  <Project Path="xKsef.DevelopmentTools/xKsef.DevelopmentTools.csproj" Id="50af98c7-f8ae-4510-b0ce-2494ba41058a" />
+  <Project Path="XKsef.Domain/xKsef.Domain.csproj" />
+  <Project Path="xKsef.Infrastructure/xKsef.Infrastructure.csproj" />
+  <Project Path="xKsef.Wpf/xKsef.Wpf.csproj" />
+</Solution>

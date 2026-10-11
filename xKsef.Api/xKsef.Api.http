@@ -1,0 +1,17 @@
+@xKsef.Api_HostAddress = https://localhost:7127
+
+GET {{xKsef.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
+
+###
+GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=Sales
+
+###
+GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=Purchase
+GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
+
+###
