@@ -12,6 +12,14 @@ GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=
 
 ###
 GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=Purchase
+
+###
+
 GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
+
+###
+
+@ksefNumber=string
+GET {{xKsef.Api_HostAddress}}/api/invoices/1234567890-20261012-6EE7E8C00000-2E/xml
 
 ###

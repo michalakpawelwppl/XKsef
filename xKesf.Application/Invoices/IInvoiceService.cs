@@ -8,4 +8,5 @@ public interface IInvoiceService
         DateOnly to,
         InvoiceDirection direction,
         CancellationToken cancellationToken = default);
+    Task<string> GetInvoiceXmlAsync(string ksefNumber, CancellationToken cancellationToken = default);
 }

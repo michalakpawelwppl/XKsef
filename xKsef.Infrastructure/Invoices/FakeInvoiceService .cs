@@ -44,4 +44,9 @@ public class FakeInvoiceService : IInvoiceService
     {
         throw new NotImplementedException();
     }
+
+    public Task<string> GetInvoiceXmlAsync(string ksefNumber, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
 }

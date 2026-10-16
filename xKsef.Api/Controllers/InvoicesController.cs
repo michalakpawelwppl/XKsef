@@ -81,6 +81,44 @@ public class InvoicesController : ControllerBase
                     Detail = ex.Message
                 });
         }
+    }
 
+    [HttpGet("{ksefNumber}/xml")]
+    public async Task<IActionResult> GetInvoiceXml(
+    string ksefNumber,
+    CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ksefNumber))
+            return BadRequest("Numer KSeF nie może być pusty.");
+
+        try
+        {
+            var xml = await _invoiceService.GetInvoiceXmlAsync(
+                ksefNumber,
+                cancellationToken);
+
+            return Content(xml, "application/xml; charset=utf-8");
+        }
+        catch (ExternalServiceRateLimitException ex)
+        {
+            if (ex.RetryAfter.HasValue)
+            {
+                var seconds = (int)Math.Ceiling(
+                    ex.RetryAfter.Value.TotalSeconds);
+
+                Response.Headers.RetryAfter =
+                    Math.Max(0, seconds).ToString(
+                        System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            return StatusCode(
+                StatusCodes.Status429TooManyRequests,
+                new ProblemDetails
+                {
+                    Status = StatusCodes.Status429TooManyRequests,
+                    Title = "Przekroczono limit żądań KSeF",
+                    Detail = ex.Message
+                });
+        }
     }
 }

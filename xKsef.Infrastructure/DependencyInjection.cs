@@ -1,4 +1,6 @@
-﻿using KSeF.Client.DI;
+﻿using KSeF.Client.Api.Services;
+using KSeF.Client.Core.Interfaces.Services;
+using KSeF.Client.DI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using xKsef.Application.Invoices;
@@ -26,6 +28,12 @@ public static class DependencyInjection
         services.Configure<KsefOptions>(configuration.GetSection(KsefOptions.SectionName));
         services.AddScoped<KsefInvoiceService>();
         services.AddSingleton<KsefRateLimitState>();
+        services.AddScoped<ICertificateFetcher, KsefCertificateFetcher>();
+        services.AddScoped<ICryptographyService, CryptographyService>();
+        services.AddHttpClient("KsefPackageDownload", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(10);
+        });
         services.AddScoped<IInvoiceService>(
     provider => provider.GetRequiredService<KsefInvoiceService>());
 
