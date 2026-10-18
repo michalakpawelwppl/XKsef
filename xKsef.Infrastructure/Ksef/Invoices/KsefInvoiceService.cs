@@ -59,7 +59,7 @@ public sealed class KsefInvoiceService : IInvoiceService
         cancellationToken));
     }
 
-    internal async Task<InvoiceImportResult> ImportInvoicesAsync(
+    internal async Task<InvoicePackageReadResult> ImportInvoicesAsync(
     DateOnly from,
     DateOnly to,
     InvoiceDirection direction,
@@ -103,7 +103,7 @@ public sealed class KsefInvoiceService : IInvoiceService
                     $"odczytane XML: {readCount}.");
             }
 
-            return new InvoiceImportResult
+            return new InvoicePackageReadResult
             {
                 ReferenceNumber = session.ReferenceNumber,
                 DeclaredInvoiceCount = declaredCount,

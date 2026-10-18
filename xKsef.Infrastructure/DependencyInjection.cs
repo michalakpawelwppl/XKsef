@@ -1,13 +1,20 @@
-﻿using KSeF.Client.Api.Services;
-using KSeF.Client.Core.Interfaces.Services;
+﻿using KSeF.Client.Core.Interfaces.Services;
 using KSeF.Client.DI;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using xKsef.Application.Authentication;
 using xKsef.Application.Invoices;
+using xKsef.Infrastructure.Authentication;
+using xKsef.Infrastructure.Identity;
+using xKsef.Infrastructure.Invoices;
 using xKsef.Infrastructure.Ksef;
 using xKsef.Infrastructure.Ksef.Authentication;
 using xKsef.Infrastructure.Ksef.Configuration;
 using xKsef.Infrastructure.Ksef.Invoices;
+using xKsef.Infrastructure.Persistence;
 
 namespace xKsef.Infrastructure;
 
@@ -28,8 +35,8 @@ public static class DependencyInjection
         services.Configure<KsefOptions>(configuration.GetSection(KsefOptions.SectionName));
         services.AddScoped<KsefInvoiceService>();
         services.AddSingleton<KsefRateLimitState>();
-        services.AddScoped<ICertificateFetcher, KsefCertificateFetcher>();
-        services.AddScoped<ICryptographyService, CryptographyService>();
+        services.AddSingleton<ICertificateFetcher, KsefCertificateFetcher>();
+        
         services.AddHttpClient("KsefPackageDownload", client =>
         {
             client.Timeout = TimeSpan.FromMinutes(10);
@@ -49,6 +56,43 @@ public static class DependencyInjection
         });
 
         services.AddCryptographyClient();
+        services.AddHostedService<KsefCryptographyWarmupService>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddDatabaseInfrastructure(
+    this IServiceCollection services,
+    IConfiguration configuration)
+    {
+        var connectionString = configuration
+            .GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException(
+                "Brak konfiguracji połączenia z bazą danych.");
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseSqlServer(connectionString));
+        services.AddIdentityCore<ApplicationUser>(options =>
+        {
+            options.Password.RequiredLength = 12;
+            options.Password.RequireDigit = true;
+            options.Password.RequireLowercase = true;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireNonAlphanumeric = true;
+
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+            options.Lockout.MaxFailedAccessAttempts = 5;
+            options.Lockout.AllowedForNewUsers = true;
+
+            options.User.RequireUniqueEmail = true;
+        })
+.AddRoles<IdentityRole>()
+.AddEntityFrameworkStores<AppDbContext>();
+        services.AddScoped<IUserAuthenticationService, UserAuthenticationService>();
+        services.AddScoped<DevelopmentUserSeeder>();
+        services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+        services.AddScoped<InvoiceImportService>();
+        services.AddScoped<IInvoicePackageImportService, InvoicePackageImportService>();
+        services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
         return services;
     }

@@ -13,8 +13,9 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly IInvoiceApiClient _invoiceApiClient;
     private DateTimeOffset? _rateLimitUntil;
-
+    private readonly IWindowNavigationService _navigationService;
     public ObservableCollection<InvoiceDto> Invoices { get; } = [];
+    private readonly ITokenStore _tokenStore;
 
     [ObservableProperty]
     private DateTime _dateFrom = DateTime.Today.AddDays(-30);
@@ -30,16 +31,44 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private int selectedTabIndex = 0;
+    [ObservableProperty]
+    private bool isLoggedIn;
+
+    [ObservableProperty]
+    private InvoiceDto? selectedSalesInvoice;
+
+    [ObservableProperty]
+    private InvoiceDto? selectedPurchaseInvoice;
 
     public ObservableCollection<InvoiceDto> SalesInvoices { get; } = new();
 
     public ObservableCollection<InvoiceDto> PurchaseInvoices { get; } = new();
 
-    public MainViewModel(IInvoiceApiClient invoiceApiClient)
+    public MainViewModel(IInvoiceApiClient invoiceApiClient, IWindowNavigationService navigationService, ITokenStore tokenStore)
     {
         _invoiceApiClient = invoiceApiClient;
+        _navigationService = navigationService;
+        _tokenStore = tokenStore;
+        _tokenStore.TokenChanged += OnTokenChanged;
     }
 
+    [RelayCommand]
+    private void Login()
+    {
+        bool? result = _navigationService.ShowLoginWindow();
+
+        if (result == true)
+        {
+            IsLoggedIn = !string.IsNullOrWhiteSpace(_tokenStore.AccessToken);
+        }
+    }
+
+    [RelayCommand]
+    private void Logout()
+    {
+        _tokenStore.AccessToken = null;
+        IsLoggedIn = false;
+    }
     [RelayCommand]
     private async Task LoadInvoicesAsync()
     {
@@ -86,7 +115,7 @@ public partial class MainViewModel : ObservableObject
             foreach (var invoice in invoices)
                 targetCollection.Add(invoice);
 
-            Status = $"Pobrano {Invoices.Count} faktur.";
+            Status = $"Pobrano {targetCollection.Count} faktur.";
         }
         catch (KsefRateLimitException ex)
         {
@@ -112,5 +141,51 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private async Task LoadInvoiceXmlAsync()
+    {
+        InvoiceDto? selectedInvoice = SelectedTabIndex switch
+        {
+            0 => SelectedSalesInvoice,
+            1 => SelectedPurchaseInvoice,
+            _ => null
+        };
+
+        if (selectedInvoice is null)
+        {
+            Status = "Najpierw zaznacz fakturę.";
+            return;
+        }
+
+        try
+        {
+            Status = "Pobieranie XML faktury...";
+
+            string xml = await _invoiceApiClient.GetInvoiceXmlAsync(
+                selectedInvoice.KsefNumber);
+
+            Status = $"Pobrano XML faktury {selectedInvoice.InvoiceNumber}.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Błąd pobierania XML: {ex.Message}";
+        }
+    }
+
+    partial void OnSelectedSalesInvoiceChanged(InvoiceDto? value)
+    {
+        if (value is null)
+            return;
+
+        LoadInvoiceXmlCommand.Execute(null);
+    }
+
+    private void OnTokenChanged(object? sender, EventArgs e)
+    {
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            IsLoggedIn = !string.IsNullOrWhiteSpace(_tokenStore.AccessToken);
+        });
+    }
 
 }

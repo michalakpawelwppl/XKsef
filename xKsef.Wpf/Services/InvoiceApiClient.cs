@@ -55,4 +55,45 @@ public class InvoiceApiClient : IInvoiceApiClient
         return await response.Content.ReadFromJsonAsync<List<InvoiceDto>>(
             cancellationToken: cancellationToken) ?? new List<InvoiceDto>();
     }
+
+    public async Task<string> GetInvoiceXmlAsync(
+    string ksefNumber,
+    CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(ksefNumber))
+            throw new ArgumentException(
+                "Numer KSeF nie może być pusty.",
+                nameof(ksefNumber));
+
+        var url = $"api/invoices/{Uri.EscapeDataString(ksefNumber)}/xml";
+
+        using var response = await _httpClient.GetAsync(
+            url,
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            TimeSpan? retryAfter = null;
+
+            var retryHeader = response.Headers.RetryAfter;
+
+            if (retryHeader?.Delta is TimeSpan delta)
+            {
+                retryAfter = delta;
+            }
+            else if (retryHeader?.Date is DateTimeOffset date)
+            {
+                retryAfter = date - DateTimeOffset.UtcNow;
+
+                if (retryAfter < TimeSpan.Zero)
+                    retryAfter = TimeSpan.Zero;
+            }
+
+            throw new KsefRateLimitException(retryAfter);
+        }
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadAsStringAsync(
+            cancellationToken);
+    }
+
 }

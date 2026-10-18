@@ -1,4 +1,4 @@
-﻿internal sealed class InvoiceImportResult
+﻿internal sealed class InvoicePackageReadResult
 {
     public required string ReferenceNumber { get; init; }
 

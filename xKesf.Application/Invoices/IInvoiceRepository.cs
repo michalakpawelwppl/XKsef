@@ -1,8 +1,14 @@
-﻿namespace xKsef.Application.Invoices;
+﻿using xKsef.Domain.Invoices;
+
+namespace xKsef.Application.Invoices;
 
 public interface IInvoiceRepository
 {
-    Task SaveXmlAsync(
-        string xml,
+    Task SaveAsync(
+        StoredInvoice invoice,
         CancellationToken cancellationToken = default);
+
+    Task<bool> ExistsAsync(
+    string ksefNumber,
+    CancellationToken cancellationToken = default);
 }
