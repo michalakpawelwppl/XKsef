@@ -1,31 +1,53 @@
 ﻿using xKsef.Application.Exceptions;
+using xKsef.Domain.Invoices;
 
 namespace xKsef.Application.Invoices;
 
 public sealed class InvoiceImportService
 {
     private readonly IInvoiceRepository _invoiceRepository;
+    private readonly IInvoiceMetadataParser _metadataParser;
+    
 
-    public InvoiceImportService(IInvoiceRepository invoiceRepository)
+    public InvoiceImportService(
+        IInvoiceRepository invoiceRepository,
+        IInvoiceMetadataParser metadataParser)
     {
         _invoiceRepository = invoiceRepository;
+        _metadataParser = metadataParser;
+        
     }
 
     public async Task ImportAsync(
-        ValidatedInvoice invoice,
-        CancellationToken cancellationToken = default)
+    ValidatedInvoice invoice,
+    InvoiceDirection direction,
+    CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(invoice);
+        if (await _invoiceRepository.ExistsAsync(
+    invoice.KsefNumber,
+    cancellationToken))
+        {
+            throw new DuplicateInvoiceException(invoice.KsefNumber);
+        }
+        InvoiceMetadata metadata = _metadataParser.Parse(
+            invoice.GetXmlBytes());
 
-        var storedInvoice = StoredInvoiceFactory.Create(invoice);
+        StoredInvoice storedInvoice = StoredInvoiceFactory.Create(
+            invoice,
+            metadata,
+            direction);
 
         await _invoiceRepository.SaveAsync(
             storedInvoice,
             cancellationToken);
     }
+
+
     public async Task<InvoiceImportResult> ImportManyAsync(
-    IReadOnlyList<ValidatedInvoice> invoices,
-    CancellationToken cancellationToken = default)
+        IReadOnlyList<ValidatedInvoice> invoices,
+        InvoiceDirection direction,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(invoices);
 
@@ -38,7 +60,7 @@ public sealed class InvoiceImportService
 
             try
             {
-                await ImportAsync(invoice, cancellationToken);
+                await ImportAsync(invoice, direction, cancellationToken);
                 importedCount++;
             }
             catch (DuplicateInvoiceException)

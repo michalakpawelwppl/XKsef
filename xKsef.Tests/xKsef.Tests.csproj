@@ -18,12 +18,15 @@
     <ProjectReference Include="..\xKsef.Infrastructure\xKsef.Infrastructure.csproj" />
   </ItemGroup>
 	<ItemGroup>
-		<None Include="..\xKsef.Infrastructure\Visualization\*.xsl"
-			  Link="Visualization\%(Filename)%(Extension)"
-			  CopyToOutputDirectory="PreserveNewest" />
+		<None Include="..\xKsef.Infrastructure\Visualization\*.xsl" Link="Visualization\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.Test.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

@@ -1,4 +1,4 @@
-﻿namespace xKsef.Application.Invoices;
+﻿namespace xKsef.Domain.Invoices;
 
 public enum InvoiceDirection
 {

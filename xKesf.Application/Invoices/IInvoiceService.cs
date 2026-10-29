@@ -3,10 +3,10 @@ using xKsef.Domain.Invoices;
 
 public interface IInvoiceService
 {
-    Task<IReadOnlyList<Invoice>> GetInvoicesAsync(
-        DateOnly from,
-        DateOnly to,
-        InvoiceDirection direction,
-        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Invoice>> GetInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default);
+    
     Task<string> GetInvoiceXmlAsync(string ksefNumber, CancellationToken cancellationToken = default);
+
+    Task<InvoicePackageReadResult> ImportInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default);
+
 }

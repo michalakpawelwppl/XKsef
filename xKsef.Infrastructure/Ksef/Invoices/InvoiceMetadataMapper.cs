@@ -12,8 +12,7 @@ internal static class InvoiceMetadataMapper
 
         if (string.IsNullOrWhiteSpace(source.KsefNumber))
         {
-            throw new InvalidOperationException(
-                "Metadane faktury nie zawierają numeru KSeF.");
+            throw new InvalidOperationException("Metadane faktury nie zawierają numeru KSeF.");
         }
 
         return new ExportedInvoiceMetadata
@@ -24,19 +23,15 @@ internal static class InvoiceMetadataMapper
         };
     }
 
-    public static IReadOnlyList<ExportedInvoiceMetadata> Map(
-    InvoicePackageMetadata source)
+    public static IReadOnlyList<ExportedInvoiceMetadata> Map(InvoicePackageMetadata source)
     {
         ArgumentNullException.ThrowIfNull(source);
 
         if (source.Invoices is null)
         {
-            throw new InvalidOperationException(
-                "Metadane paczki nie zawierają listy faktur.");
+            throw new InvalidOperationException("Metadane paczki nie zawierają listy faktur.");
         }
 
-        return source.Invoices
-            .Select(Map)
-            .ToList();
+        return source.Invoices.Select(Map).ToList();
     }
 }

@@ -49,4 +49,9 @@ public class FakeInvoiceService : IInvoiceService
     {
         throw new NotImplementedException();
     }
+
+    public Task<InvoicePackageReadResult> ImportInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
 }

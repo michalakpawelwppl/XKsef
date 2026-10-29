@@ -1,4 +1,5 @@
 ﻿using xKsef.Application.Invoices;
+using xKsef.Domain.Invoices;
 
 
 namespace xKsef.Infrastructure.Invoices;
@@ -14,8 +15,9 @@ internal sealed class InvoicePackageImportService : IInvoicePackageImportService
     }
 
     public async Task<InvoiceImportResult> ImportFromDirectoryAsync(
-    string directoryPath,
-    CancellationToken cancellationToken = default)
+        string directoryPath,
+        InvoiceDirection direction,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
 
@@ -27,15 +29,17 @@ internal sealed class InvoicePackageImportService : IInvoicePackageImportService
             .ReadFromFileAsync(metadataPath, cancellationToken);
 
         return await ImportValidatedInvoicesAsync(
-            directoryPath,
-            invoices,
-            cancellationToken);
+    directoryPath,
+    invoices,
+    direction,
+    cancellationToken);
     }
 
     private async Task<InvoiceImportResult> ImportValidatedInvoicesAsync(
-    string directoryPath,
-    IReadOnlyList<ExportedInvoiceMetadata> invoices,
-    CancellationToken cancellationToken)
+        string directoryPath,
+        IReadOnlyList<ExportedInvoiceMetadata> invoices,
+        InvoiceDirection direction,
+        CancellationToken cancellationToken)
     {
         var validatedInvoices =
             await InvoicePackageValidator.ValidateAllInvoicesAsync(
@@ -45,6 +49,7 @@ internal sealed class InvoicePackageImportService : IInvoicePackageImportService
 
         return await _invoiceImportService.ImportManyAsync(
             validatedInvoices,
+            direction,
             cancellationToken);
     }
 }

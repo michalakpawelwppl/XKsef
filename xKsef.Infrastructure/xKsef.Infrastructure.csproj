@@ -21,7 +21,9 @@
     <ProjectReference Include="..\xKesf.Application\xKesf.Application.csproj" />
     <ProjectReference Include="..\XKsef.Domain\xKsef.Domain.csproj" />
   </ItemGroup>
-
+	<ItemGroup>
+		<InternalsVisibleTo Include="xKsef.Tests" />
+	</ItemGroup>
 	<ItemGroup>
 		<None Update="Visualization\*.xsl">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>

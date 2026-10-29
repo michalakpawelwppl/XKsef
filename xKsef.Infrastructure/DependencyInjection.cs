@@ -7,9 +7,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using xKsef.Application.Authentication;
 using xKsef.Application.Invoices;
+using xKsef.Application.Invoices.Pdf;
 using xKsef.Infrastructure.Authentication;
 using xKsef.Infrastructure.Identity;
 using xKsef.Infrastructure.Invoices;
+using xKsef.Infrastructure.Invoices.Pdf;
 using xKsef.Infrastructure.Ksef;
 using xKsef.Infrastructure.Ksef.Authentication;
 using xKsef.Infrastructure.Ksef.Configuration;
@@ -33,10 +35,19 @@ public static class DependencyInjection
         services.AddSingleton<KsefTokenStore>();
         services.AddSingleton<KsefTokenProvider>();
         services.Configure<KsefOptions>(configuration.GetSection(KsefOptions.SectionName));
-        services.AddScoped<KsefInvoiceService>();
+        services.AddScoped<KsefInvoiceService>(provider =>
+        {
+            var httpClientFactory =
+                provider.GetRequiredService<IHttpClientFactory>();
+
+            var downloadClient = httpClientFactory.CreateClient("KsefPackageDownload");
+
+            return ActivatorUtilities.CreateInstance<KsefInvoiceService>(provider,downloadClient);
+        });
         services.AddSingleton<KsefRateLimitState>();
         services.AddSingleton<ICertificateFetcher, KsefCertificateFetcher>();
-        
+        services.AddScoped<IInvoicePdfGenerator, NodeInvoicePdfGenerator>();
+
         services.AddHttpClient("KsefPackageDownload", client =>
         {
             client.Timeout = TimeSpan.FromMinutes(10);
@@ -46,8 +57,7 @@ public static class DependencyInjection
 
         if (string.IsNullOrWhiteSpace(ksefOptions.BaseUrl))
         {
-            throw new InvalidOperationException(
-                "Nie skonfigurowano adresu KSeF API.");
+            throw new InvalidOperationException("Nie skonfigurowano adresu KSeF API.");
         }
 
         services.AddKSeFClient(options =>
@@ -65,12 +75,8 @@ public static class DependencyInjection
     this IServiceCollection services,
     IConfiguration configuration)
     {
-        var connectionString = configuration
-            .GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException(
-                "Brak konfiguracji połączenia z bazą danych.");
-        services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(connectionString));
+        var connectionString = configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Brak konfiguracji połączenia z bazą danych.");
+        services.AddDbContext<AppDbContext>(options => options.UseSqlServer(connectionString));
         services.AddIdentityCore<ApplicationUser>(options =>
         {
             options.Password.RequiredLength = 12;
@@ -91,8 +97,10 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentUserSeeder>();
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
         services.AddScoped<InvoiceImportService>();
+        services.AddScoped<IInvoiceImportTransaction, InvoiceImportTransaction>();
         services.AddScoped<IInvoicePackageImportService, InvoicePackageImportService>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
+        services.AddSingleton<IInvoiceMetadataParser, KsefInvoiceMetadataParser>();
 
         return services;
     }

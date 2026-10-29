@@ -19,6 +19,7 @@ builder.Services.AddKsefInfrastructure(
     builder.Configuration);
 builder.Services.AddDatabaseInfrastructure(builder.Configuration);
     builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
+builder.Services.AddExceptionHandler<ExternalServiceRateLimitExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -114,29 +115,6 @@ if (app.Environment.IsDevelopment())
     await seeder.SeedAsync(password);
 }
 
-//if (app.Environment.IsDevelopment())
-//{
-//    var tokenProvider = app.Services
-//        .GetRequiredService<KsefTokenProvider>();
-
-//    var token1 = await tokenProvider.GetAccessTokenAsync();
-
-//    app.Logger.LogInformation(
-//        "Pierwsze pobranie tokena: {Result}",
-//        string.IsNullOrEmpty(token1) ? "BRAK" : "OK");
-
-//    var token2 = await tokenProvider.GetAccessTokenAsync();
-
-//    app.Logger.LogInformation(
-//        "Drugie pobranie tokena: {Result}",
-//        string.IsNullOrEmpty(token2) ? "BRAK" : "OK");
-
-//    app.Logger.LogInformation(
-//        "Czy otrzymaliśmy ten sam token: {Result}",
-//        token1 == token2);
-//}
-
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -154,12 +132,4 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-//var hostedServices = app.Services
-//    .GetServices<IHostedService>();
-
-//foreach (var service in hostedServices)
-//{
-//    Console.WriteLine(
-//        $"HostedService: {service.GetType().FullName}");
-//}
 app.Run();

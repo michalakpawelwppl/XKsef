@@ -24,13 +24,12 @@ GET {{xKsef.Api_HostAddress}}/api/invoices/1234567890-20261012-6EE7E8C00000-2E/x
 
 ###
 
-POST {{xKsef.Api_HostAddress}}/api/invoices/import
-
+POST {{xKsef.Api_HostAddress}}/api/invoices/import?direction=Purchase
+Authorization : Bearer {{JWT_TOKEN}}
 ###
 
 POST {{xKsef.Api_HostAddress}}/api/auth/login
 Content-Type: application/json
-{{JWT_TOKEN}}
 {
   "login": "testadmin",
   "password": "{{TEST_PASSWORD}}"
@@ -44,5 +43,13 @@ POST {{xKsef.Api_HostAddress}}/api/invoices/import
 
 GET {{xKsef.Api_HostAddress}}/api/auth/auth-test
 Authorization: Bearer {{JWT_TOKEN}}
+
+###
+
+GET {{xKsef.Api_HostAddress}}/api/invoices/7841476673-20261018-7BBBE1C00000-7D/pdf
+Authorization: Bearer {{JWT_TOKEN}}
+###
+
+POST {{xKsef.Api_HostAddress}}/api/invoices/import
 
 ###

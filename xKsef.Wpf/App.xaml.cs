@@ -27,8 +27,9 @@ public partial class App : System.Windows.Application
                     client =>
                     {
                         client.BaseAddress = new Uri(apiBaseUrl);
-                    }).AddHttpMessageHandler<BearerTokenHandler>()
-                ;
+                        client.Timeout = TimeSpan.FromMinutes(15);
+                    })
+                    .AddHttpMessageHandler<BearerTokenHandler>();
 
                 services.AddHttpClient<IAuthenticationApiClient, AuthenticationApiClient>(
                     client =>

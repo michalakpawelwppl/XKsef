@@ -1,10 +1,19 @@
 ﻿<Window x:Class="xKsef.Wpf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:pdf="clr-namespace:PdfiumViewer;assembly=PdfiumViewer"
+        xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
         Title="xKsef - Przeglądarka faktur"
         Height="600"
         Width="1100">
-
+    <i:Interaction.Triggers>
+        <i:EventTrigger EventName="Loaded">
+            <i:InvokeCommandAction Command="{Binding LoadInvoicesCommand}" />
+        </i:EventTrigger>
+        <i:EventTrigger EventName="Closed">
+            <i:InvokeCommandAction Command="{Binding CleanupOnCloseCommand}" />
+        </i:EventTrigger>
+    </i:Interaction.Triggers>
     <Grid>
         <Grid.RowDefinitions>
             <!-- Górny pasek -->
@@ -91,7 +100,11 @@ Margin="5,0"
                     <Button Content="Pobierz faktury"
                             Command="{Binding LoadInvoicesCommand}"
                             Padding="15,6"/>
-
+                    <Button Content="Importuj z KSeF"
+        Command="{Binding ImportFromKsefCommand}"
+        Padding="15,6"
+        Margin="10,0,0,0"
+        IsEnabled="{Binding IsLoggedIn}"/>
                 </StackPanel>
             </StackPanel>
 
@@ -101,22 +114,51 @@ Margin="5,0"
                        Margin="0,10,0,0"/>
 
             <!-- Zakładki faktur -->
-            <TabControl SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+            <!-- Lista faktur i podgląd PDF -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <!-- Lista faktur -->
+                    <ColumnDefinition Width="403*" MinWidth="300"/>
+                    <ColumnDefinition Width="132*"/>
 
-                <TabItem Header="Sprzedaż">
-                    <DataGrid ItemsSource="{Binding SalesInvoices}" SelectedItem="{Binding SelectedSalesInvoice, Mode=TwoWay}"
-                              AutoGenerateColumns="True"
-                              IsReadOnly="True"/>
-                </TabItem>
+                    <!-- Podgląd PDF -->
+                    <ColumnDefinition Width="535*" MinWidth="300"/>
+                </Grid.ColumnDefinitions>
 
-                <TabItem Header="Zakup">
-                    <DataGrid ItemsSource="{Binding PurchaseInvoices}" SelectedItem="{Binding SelectedPurchaseInvoice, Mode=TwoWay}"
-                              AutoGenerateColumns="True"
-                              IsReadOnly="True"/>
-                </TabItem>
+                <!-- LEWA STRONA: lista faktur -->
+                <TabControl Grid.Column="0"
+                SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}"
+                Margin="0,0,5,0" Grid.ColumnSpan="2">
 
-            </TabControl>
+                    <TabItem Header="Sprzedaż">
+                        <DataGrid ItemsSource="{Binding SalesInvoices}"
+                      SelectedItem="{Binding SelectedSalesInvoice, Mode=TwoWay}"
+                      AutoGenerateColumns="True"
+                      IsReadOnly="True"/>
+                    </TabItem>
 
+                    <TabItem Header="Zakup">
+                        <DataGrid ItemsSource="{Binding PurchaseInvoices}"
+                      SelectedItem="{Binding SelectedPurchaseInvoice, Mode=TwoWay}"
+                      AutoGenerateColumns="True"
+                      IsReadOnly="True"/>
+                    </TabItem>
+
+                </TabControl>
+
+                <!-- PRAWA STRONA: przyszły podgląd PDF -->
+                <Border Grid.Column="2"
+            BorderBrush="#CCCCCC"
+            BorderThickness="1"
+            Margin="5,0,0,0">
+
+                    <pdf:PDFViewer
+    x:Name="InvoicePdfViewer"
+    Source="{Binding SelectedInvoicePdfPath}"
+    FitWidth="True"/>
+
+                </Border>
+            </Grid>
         </DockPanel>
     </Grid>
 </Window>

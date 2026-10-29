@@ -11,4 +11,10 @@ public interface IInvoiceRepository
     Task<bool> ExistsAsync(
     string ksefNumber,
     CancellationToken cancellationToken = default);
+
+    Task<StoredInvoice?> GetByKsefNumberAsync(
+    string ksefNumber,
+    CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<StoredInvoice>> GetInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default);
 }
