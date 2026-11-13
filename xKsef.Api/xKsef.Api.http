@@ -8,8 +8,9 @@ Accept: application/json
 GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
 
 ###
-GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=Sales
-
+GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-30&direction=Sales
+X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+Authorization : Bearer {{JWT_TOKEN}}
 ###
 GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=Purchase
 
@@ -51,5 +52,96 @@ Authorization: Bearer {{JWT_TOKEN}}
 ###
 
 POST {{xKsef.Api_HostAddress}}/api/invoices/import
+
+###
+
+POST {{xKsef.Api_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  //LoginRequest
+}
+
+###
+
+GET {{xKsef.Api_HostAddress}}/api/tenants
+Authorization: Bearer {{JWT_TOKEN}}
+###
+
+GET {{xKsef.Api_HostAddress}}/api/tenants
+
+###
+
+GET {{xKsef.Api_HostAddress}}/api/tenants
+
+###
+
+POST {{xKsef.Api_HostAddress}}/api/ksef/authentication/prepare
+Authorization: Bearer {{JWT_TOKEN}}
+X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+###
+
+POST {{xKsef.Api_HostAddress}}/api/ksef/authentication/prepare
+
+###
+
+POST {{xKsef.Api_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  //LoginRequest
+}
+
+###
+
+POST {{xKsef.Api_HostAddress}}/api/invoices/import/ksef
+Content-Type: application/json
+
+{
+  //DateOnly
+}
+
+###
+
+POST {{xKsef.Api_HostAddress}}/api/invoices/import/ksef
+Content-Type: application/json
+
+{
+  //DateOnly
+}
+
+###
+
+POST  {{xKsef.Api_HostAddress}}/api/invoices/import/ksef?from=2026-10-31&to=2026-10-31&direction=Purchase
+
+Authorization: Bearer {{JWT_TOKEN}}
+X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+###
+{
+  //DateOnly
+}
+
+###
+
+GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
+
+###
+
+GET {{xKsef.Api_HostAddress}}/api/tenants
+
+###
+
+POST {{xKsef.Api_HostAddress}}/api/ksef/credentials/token
+Content-Type: application/json
+Authorization : Bearer {{JWT_TOKEN}}
+X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+{
+    "token": "TEST-XKSEF-123456789"
+}
+###
+
+GET {{xKsef.Api_HostAddress}}/api/ksef/credentials/token
+Authorization : Bearer {{JWT_TOKEN}}
+X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
 
 ###

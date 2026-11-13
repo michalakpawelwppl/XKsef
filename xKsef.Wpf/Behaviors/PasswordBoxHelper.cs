@@ -20,16 +20,12 @@ public static class PasswordBoxHelper
         return (string)obj.GetValue(BoundPasswordProperty);
     }
 
-    public static void SetBoundPassword(
-        DependencyObject obj,
-        string value)
+    public static void SetBoundPassword(DependencyObject obj, string value)
     {
         obj.SetValue(BoundPasswordProperty, value);
     }
 
-    private static void OnBoundPasswordChanged(
-    DependencyObject obj,
-    DependencyPropertyChangedEventArgs e)
+    private static void OnBoundPasswordChanged(DependencyObject obj, DependencyPropertyChangedEventArgs e)
     {
         if (obj is not PasswordBox passwordBox)
             return;
@@ -46,14 +42,10 @@ public static class PasswordBoxHelper
         passwordBox.PasswordChanged += OnPasswordChanged;
     }
 
-    private static void OnPasswordChanged(
-        object sender,
-        RoutedEventArgs e)
+    private static void OnPasswordChanged(object sender, RoutedEventArgs e)
     {
         var passwordBox = (PasswordBox)sender;
 
-        SetBoundPassword(
-            passwordBox,
-            passwordBox.Password);
+        SetBoundPassword(passwordBox, passwordBox.Password);
     }
 }

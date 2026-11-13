@@ -2,6 +2,5 @@
 
 public interface IKsefAuthenticationService
 {
-    Task<bool> AuthenticateAsync(
-        CancellationToken cancellationToken = default);
+    Task<bool> AuthenticateAsync(CancellationToken cancellationToken = default);
 }

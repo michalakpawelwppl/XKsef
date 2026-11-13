@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\xKsef.Api\xKsef.Api.csproj" />
+    <ProjectReference Include="..\xKesf.Application\xKesf.Application.csproj" />
     <ProjectReference Include="..\xKsef.Contracts\xKsef.Contracts.csproj" />
   </ItemGroup>
 

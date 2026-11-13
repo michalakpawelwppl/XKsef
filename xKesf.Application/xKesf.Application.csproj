@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\xKsef.Contracts\xKsef.Contracts.csproj" />
     <ProjectReference Include="..\XKsef.Domain\xKsef.Domain.csproj" />
   </ItemGroup>
 

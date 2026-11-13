@@ -1,14 +1,11 @@
-﻿using xKsef.Application.Invoices;
+﻿using xKsef.Contracts.Invoices;
 using xKsef.Domain.Invoices;
 
 namespace xKsef.Infrastructure.Invoices;
 
 public class FakeInvoiceService : IInvoiceService
 {
-    public Task<IReadOnlyList<Invoice>> GetInvoicesAsync(
-        DateOnly from,
-        DateOnly to,
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<Invoice>> GetInvoicesAsync(DateOnly from,DateOnly to,CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -40,7 +37,12 @@ public class FakeInvoiceService : IInvoiceService
                 x.IssueDate <= to).ToList());
     }
 
-    public Task<IReadOnlyList<Invoice>> GetInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<Invoice>> GetInvoicesAsync(DateOnly from, DateOnly to, Domain.Invoices.InvoiceDirection direction, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<IReadOnlyList<Invoice>> GetInvoicesAsync(Guid tenantId, DateOnly from, DateOnly to, Domain.Invoices.InvoiceDirection direction, CancellationToken cancellationToken = default)
     {
         throw new NotImplementedException();
     }
@@ -50,7 +52,22 @@ public class FakeInvoiceService : IInvoiceService
         throw new NotImplementedException();
     }
 
-    public Task<InvoicePackageReadResult> ImportInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
+    public Task<string> GetInvoiceXmlAsync(string userId, Guid tenantId, string ksefNumber, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<InvoicePackageReadResult> ImportInvoicesAsync(DateOnly from, DateOnly to, Domain.Invoices.InvoiceDirection direction, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<InvoicePackageReadResult> ImportInvoicesAsync(Guid tenantId, DateOnly from, DateOnly to, Domain.Invoices.InvoiceDirection direction, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<InvoicePackageReadResult> ImportInvoicesAsync(string userId, Guid tenantId, DateOnly from, DateOnly to, Domain.Invoices.InvoiceDirection direction, CancellationToken cancellationToken = default)
     {
         throw new NotImplementedException();
     }

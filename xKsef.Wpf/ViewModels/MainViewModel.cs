@@ -2,21 +2,53 @@
 using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
 using System.IO;
+using xKsef.Application.Credentials;
 using xKsef.Contracts.Invoices;
-using xKsef.Domain.Invoices;
+using xKsef.Contracts.Tenants;
+using xKsef.Wpf.Authentication;
 using xKsef.Wpf.Exceptions;
+using xKsef.Wpf.Http;
+using xKsef.Wpf.Models;
+using xKsef.Wpf.Services;
+using xKsef.Wpf.Services.Certificates;
 
 namespace xKsef.Wpf.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+    private readonly record struct ContextSnapshot(long Generation, long SessionVersion, Guid? TenantId, CancellationToken CancellationToken);
+
+    private readonly IAuthenticationApiClient _authenticationApiClient;
+    private readonly ICertificateSelectionWindowService _certificateSelectionWindowService;
     private readonly IInvoiceApiClient _invoiceApiClient;
     private DateTimeOffset? _rateLimitUntil;
     private readonly IWindowNavigationService _navigationService;
-    public ObservableCollection<InvoiceDto> Invoices { get; } = [];
+    private readonly IKsefCredentialsApiClient _ksefCredentialsApiClient;
     private readonly ITokenStore _tokenStore;
-
+    private readonly ITenantApiClient _tenantApiClient;
+    private readonly TenantContext _tenantContext;
+    private readonly object _contextSync = new();
+    private long _contextGeneration;
+    private long _contextSessionVersion;
+    private long _contextSessionUiScheduledVersion;
+    private long _contextSessionUiHandledVersion;
+    private Guid? _contextTenantId;
+    private CancellationTokenSource _contextCancellationTokenSource = new();
+    private bool _isCleanedUp;
+    private bool _isClearingContextDependentState;
+    private long _certificateSaveOperationId;
     private CancellationTokenSource? _invoicePdfCancellationTokenSource;
+    private long _invoicePdfRequestId;
+    private readonly record struct InvoiceFilterSnapshot(DateOnly From, DateOnly To, InvoiceDateKind DateKind, string? TimeZoneId);
+    private long _invoiceFilterVersion;
+    private long _invoiceReadOperationId;
+    private long? _invoiceLoadingOwnerId;
+    private bool _invoiceOperationIsImport;
+    private CancellationTokenSource? _invoiceReadCancellationTokenSource;
+    private readonly HashSet<string> _temporaryPdfPathsPendingDeletion = [];
+    private readonly IKsefTokenWindowService _ksefTokenWindowService;
+    public string KsefTokenStatus => HasKsefToken ? "Token KSeF skonfigurowany" : "Token KSeF nieskonfigurowany";
+
     private string? _currentTemporaryPdfPath;
     [ObservableProperty]
     private DateTime _dateFrom = DateTime.Today.AddDays(-30);
@@ -40,39 +72,389 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private InvoiceDto? selectedPurchaseInvoice;
+
     [ObservableProperty]
     private string? selectedInvoicePdfPath;
+
     public ObservableCollection<InvoiceDto> SalesInvoices { get; } = new();
 
     public ObservableCollection<InvoiceDto> PurchaseInvoices { get; } = new();
+    public ObservableCollection<InvoiceCurrencySummaryDto> SalesSummaries { get; } = new();
+    public ObservableCollection<InvoiceCurrencySummaryDto> PurchaseSummaries { get; } = new();
 
-    public MainViewModel(IInvoiceApiClient invoiceApiClient, IWindowNavigationService navigationService, ITokenStore tokenStore)
+    [ObservableProperty]
+    private InvoiceDateKind _selectedInvoiceDateKind = InvoiceDateKind.IssueDate;
+    [ObservableProperty]
+    private bool _hasSalesQueryResult;
+    [ObservableProperty]
+    private bool _hasPurchaseQueryResult;
+
+    public ObservableCollection<TenantDto> AvailableTenants { get; } = new();
+
+    public ObservableCollection<KsefCredentialOption> AvailableKsefCredentials { get; } = new();
+
+    [ObservableProperty]
+    private KsefCredentialOption? _selectedKsefCredential;
+
+
+    [ObservableProperty]
+    private TenantDto? selectedTenant;
+
+    [ObservableProperty]
+    private bool _hasKsefToken;
+
+    [ObservableProperty]
+    private Guid? _ksefCredentialId;
+   
+    [ObservableProperty]
+    private bool _hasKsefCertificate;
+
+    [ObservableProperty]
+    private Guid? _ksefCertificateCredentialId;
+
+    [ObservableProperty]
+    private Guid? _preferredKsefCredentialId;
+    public MainViewModel(IInvoiceApiClient invoiceApiClient, IWindowNavigationService navigationService, ITokenStore tokenStore, ITenantApiClient tenantApiClient, TenantContext tenantContext, ICertificateSelectionWindowService certificateSelectionWindowService, IAuthenticationApiClient authenticationApiClient, IKsefCredentialsApiClient ksefCredentialsApiClient, IKsefTokenWindowService ksefTokenWindowService)
     {
         _invoiceApiClient = invoiceApiClient;
         _navigationService = navigationService;
         _tokenStore = tokenStore;
+        _tenantApiClient = tenantApiClient;
+        _tenantContext = tenantContext;
+        _contextTenantId = tenantContext.TenantId;
+        _tenantContext.TenantChanged += OnTenantChanged;
+        _certificateSelectionWindowService = certificateSelectionWindowService;
+        _authenticationApiClient = authenticationApiClient;
+        _ksefCredentialsApiClient = ksefCredentialsApiClient;
+        _ksefTokenWindowService = ksefTokenWindowService;
         _tokenStore.TokenChanged += OnTokenChanged;
-        
+
+        var initialSessionSnapshot = _tokenStore.GetSessionSnapshot();
+        AdvanceSessionContext(initialSessionSnapshot.SessionVersion);
     }
 
-    private async Task<int> RefreshInvoicesAsync(InvoiceDirection direction)
+    private void OnTenantChanged(object? sender, EventArgs e)
     {
-        var invoices = await _invoiceApiClient.GetInvoicesAsync(DateOnly.FromDateTime(DateFrom), DateOnly.FromDateTime(DateTo), direction);
+        if (!AdvanceContextGeneration(_tenantContext.TenantId, tenantChanged: true, out long eventGeneration)) return;
 
-        var targetCollection = direction == InvoiceDirection.Sales ? SalesInvoices : PurchaseInvoices;
+        System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            if (!IsCurrentContextGeneration(eventGeneration)) return;
 
-        targetCollection.Clear();
+            ClearContextDependentState();
 
-        foreach (var invoice in invoices)
-            targetCollection.Add(invoice);
+            if (!IsLoggedIn || !_tenantContext.HasTenant) return;
 
-        return targetCollection.Count;
+            var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
+            if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
+
+            await CheckKsefTokenAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            await CheckKsefCertificateAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            await CheckPreferredKsefCredentialAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            RefreshKsefCredentials();
+        });
+    }
+
+    private async Task CheckKsefTokenAsync(ApiRequestContext context)
+    {
+        if (!IsCurrentContext(context)) return;
+
+        if (context.TenantId is null || string.IsNullOrWhiteSpace(context.AccessToken)) return;
+
+        try
+        {
+            KsefTokenInfo tokenInfo = await _ksefCredentialsApiClient.GetTokenInfoAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            HasKsefToken = tokenInfo.Exists;
+            KsefCredentialId = tokenInfo.CredentialId;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentContext(context))
+                Status = $"Błąd sprawdzania tokenu KSeF: {ex.Message}";
+        }
+    }
+
+    private async Task CheckKsefCertificateAsync(ApiRequestContext context)
+    {
+        if (!IsCurrentContext(context)) return;
+
+        if (context.TenantId is null || string.IsNullOrWhiteSpace(context.AccessToken)) return;
+
+        try
+        {
+            KsefTokenInfo certificateInfo = await _ksefCredentialsApiClient.GetCertificateInfoAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            HasKsefCertificate = certificateInfo.Exists;
+            KsefCertificateCredentialId = certificateInfo.CredentialId;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentContext(context))
+                Status = $"Błąd sprawdzania certyfikatu KSeF: {ex.Message}";
+        }
+    }
+    private async Task LoadTenantsAsync()
+    {
+        try
+        {
+            var tenants = await _tenantApiClient.GetMyTenantsAsync();
+
+            AvailableTenants.Clear();
+
+            foreach (var tenant in tenants)
+                AvailableTenants.Add(tenant);
+
+            SelectedTenant = AvailableTenants.FirstOrDefault();
+
+            _tenantContext.SetTenant(SelectedTenant);
+            if (SelectedTenant is null)
+            {
+                Status = "Nie masz dostępu do żadnego podmiotu.";
+                return;
+            }
+
+            Status = $"Wybrano podmiot: {SelectedTenant.Name}";
+
+     
+        }
+        catch (Exception ex)
+        {
+            AvailableTenants.Clear();
+            SelectedTenant = null;
+            _tenantContext.SetTenant(null);
+            Status = $"Błąd pobierania podmiotów: {ex.Message}";
+        }
+    }
+
+    private void RefreshKsefCredentials()
+    {
+        AvailableKsefCredentials.Clear();
+        SelectedKsefCredential = null;
+
+        if (HasKsefToken && KsefCredentialId is Guid tokenId)
+            AvailableKsefCredentials.Add(new KsefCredentialOption { CredentialId = tokenId, Name = "Token KSeF" });
+
+        if (HasKsefCertificate && KsefCertificateCredentialId is Guid certificateId)
+            AvailableKsefCredentials.Add(new KsefCredentialOption { CredentialId = certificateId, Name = "Certyfikat KSeF" });
+
+        SelectedKsefCredential = AvailableKsefCredentials.FirstOrDefault(x => x.CredentialId == PreferredKsefCredentialId);
+    }
+
+    private async Task CheckPreferredKsefCredentialAsync(ApiRequestContext context)
+    {
+        if (!IsCurrentContext(context)) return;
+
+        if (context.TenantId is not Guid tenantId)
+            return;
+
+        try
+        {
+            Guid? preferredCredentialId = await _tenantApiClient.GetPreferredKsefCredentialIdAsync(tenantId);
+            if (!IsCurrentContext(context)) return;
+
+            PreferredKsefCredentialId = preferredCredentialId;
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentContext(context))
+                Status = $"Błąd odczytu preferowanego poświadczenia KSeF: {ex.Message}";
+        }
+    }
+
+    partial void OnDateFromChanged(DateTime value) => InvalidateInvoiceFilter();
+    partial void OnDateToChanged(DateTime value) => InvalidateInvoiceFilter();
+    partial void OnSelectedInvoiceDateKindChanged(InvoiceDateKind value) => InvalidateInvoiceFilter();
+
+    private void InvalidateInvoiceFilter()
+    {
+        _invoiceFilterVersion++;
+        _invoiceReadCancellationTokenSource?.Cancel();
+        bool releaseLoading = _invoiceLoadingOwnerId.HasValue && !_invoiceOperationIsImport;
+        if (releaseLoading)
+        {
+            _invoiceReadOperationId++;
+            _invoiceLoadingOwnerId = null;
+        }
+        ClearInvoiceResults();
+        if (releaseLoading) IsLoading = false;
+    }
+
+    private void ClearInvoiceResults()
+    {
+        _invoicePdfRequestId++;
+        _invoicePdfCancellationTokenSource?.Cancel();
+        bool wasClearing = _isClearingContextDependentState;
+        _isClearingContextDependentState = true;
+        try
+        {
+            HasSalesQueryResult = false;
+            HasPurchaseQueryResult = false;
+            SalesInvoices.Clear();
+            PurchaseInvoices.Clear();
+            SalesSummaries.Clear();
+            PurchaseSummaries.Clear();
+            SelectedSalesInvoice = null;
+            SelectedPurchaseInvoice = null;
+        }
+        finally { _isClearingContextDependentState = wasClearing; }
+        DeletePreviousTemporaryPdf();
+    }
+
+    private InvoiceFilterSnapshot CaptureInvoiceFilter()
+    {
+        DateOnly from = DateOnly.FromDateTime(DateFrom);
+        DateOnly to = DateOnly.FromDateTime(DateTo);
+        if (from > to) throw new InvalidOperationException("Data początkowa nie może być późniejsza niż końcowa.");
+        if (!Enum.IsDefined(SelectedInvoiceDateKind)) throw new InvalidOperationException("Nieprawidłowy rodzaj daty.");
+        string? zoneId = null;
+        if (SelectedInvoiceDateKind == InvoiceDateKind.InvoicingDate)
+        {
+            try
+            {
+                var zone = TimeZoneInfo.Local;
+                zoneId = TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out string? ianaId) ? ianaId : zone.Id;
+                _ = TimeZoneInfo.FindSystemTimeZoneById(zoneId!);
+            }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException or ArgumentException)
+            {
+                throw new InvalidOperationException("Nie udało się ustalić obsługiwanej strefy czasowej użytkownika. Sprawdź ustawienia strefy czasowej systemu.", ex);
+            }
+        }
+        return new InvoiceFilterSnapshot(from, to, SelectedInvoiceDateKind, zoneId);
+    }
+
+    private bool OwnsInvoiceLoading(ApiRequestContext context, long operationId) => IsCurrentContext(context) && _invoiceLoadingOwnerId == operationId && _invoiceReadOperationId == operationId;
+
+    private bool IsCurrentInvoiceRead(ApiRequestContext context, long operationId, long filterVersion, InvoiceFilterSnapshot filter)
+    {
+        return OwnsInvoiceLoading(context, operationId) && filterVersion == _invoiceFilterVersion
+            && filter.From == DateOnly.FromDateTime(DateFrom) && filter.To == DateOnly.FromDateTime(DateTo) && filter.DateKind == SelectedInvoiceDateKind;
+    }
+
+    private void FinishInvoiceLoading(ApiRequestContext context, long operationId)
+    {
+        if (!OwnsInvoiceLoading(context, operationId)) return;
+        _invoiceLoadingOwnerId = null;
+        IsLoading = false;
+    }
+
+    private async Task<bool> RefreshInvoicesAsync(ApiRequestContext context, InvoiceDirection direction, long operationId)
+    {
+        var filter = CaptureInvoiceFilter();
+        long filterVersion = _invoiceFilterVersion;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+        _invoiceReadCancellationTokenSource = cancellation;
+        var readContext = context with { CancellationToken = cancellation.Token };
+        bool IsCurrent() => IsCurrentInvoiceRead(readContext, operationId, filterVersion, filter);
+        try
+        {
+            var result = await _invoiceApiClient.QueryInvoicesAsync(readContext, filter.From, filter.To, direction, filter.DateKind, filter.TimeZoneId);
+            if (!IsCurrent()) return false;
+            var invoices = direction == InvoiceDirection.Sales ? SalesInvoices : PurchaseInvoices;
+            var summaries = direction == InvoiceDirection.Sales ? SalesSummaries : PurchaseSummaries;
+            bool wasClearing = _isClearingContextDependentState;
+            _isClearingContextDependentState = true;
+            try
+            {
+                if (direction == InvoiceDirection.Sales) HasSalesQueryResult = false; else HasPurchaseQueryResult = false;
+                if (!IsCurrent()) return false;
+                invoices.Clear();
+                if (!IsCurrent()) return false;
+                summaries.Clear();
+                if (!IsCurrent()) return false;
+                if (direction == InvoiceDirection.Sales) SelectedSalesInvoice = null; else SelectedPurchaseInvoice = null;
+                foreach (var invoice in result.Items)
+                {
+                    if (!IsCurrent()) return false;
+                    invoices.Add(invoice);
+                }
+                foreach (var summary in result.Summaries)
+                {
+                    if (!IsCurrent()) return false;
+                    summaries.Add(summary);
+                }
+                if (!IsCurrent()) return false;
+                if (direction == InvoiceDirection.Sales) HasSalesQueryResult = true; else HasPurchaseQueryResult = true;
+            }
+            finally { _isClearingContextDependentState = wasClearing; }
+            if (!IsCurrent()) return false;
+            if ((direction == InvoiceDirection.Sales && SelectedTabIndex == 0) || (direction == InvoiceDirection.Purchase && SelectedTabIndex == 1))
+                HandleActiveInvoiceChanged();
+            return IsCurrent();
+        }
+        catch (Exception) when (!IsCurrent()) { return false; }
+        finally
+        {
+            if (ReferenceEquals(_invoiceReadCancellationTokenSource, cancellation)) _invoiceReadCancellationTokenSource = null;
+        }
     }
 
     [RelayCommand]
     private void CleanupOnClose()
     {
         Cleanup();
+    }
+
+    [RelayCommand]
+    private async Task NewTenantAsync()
+    {
+        if (!IsLoggedIn) return;
+        TenantCreationDialogResult? result = _navigationService.ShowNewTenantWindow();
+        if (result is null) return;
+
+        bool IsSessionCurrent() => !_isCleanedUp && _tokenStore.SessionVersion == result.SessionVersion;
+        if (!IsSessionCurrent()) return;
+        var snapshot = CaptureContext(ApiRequestScope.User);
+        if (snapshot is not ApiRequestContext context || context.SessionVersion != result.SessionVersion || string.IsNullOrWhiteSpace(context.AccessToken)) return;
+        var userContext = context with { TenantId = null };
+
+        try
+        {
+            IReadOnlyList<TenantDto> tenants = await _tenantApiClient.GetMyTenantsAsync(userContext);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            if (!IsSessionCurrent()) return;
+            TenantDto? createdTenant = tenants.FirstOrDefault(x => x.Id == result.TenantId);
+            if (createdTenant is not null)
+            {
+                if (!IsSessionCurrent()) return;
+                AvailableTenants.Clear();
+                foreach (TenantDto tenant in tenants)
+                {
+                    if (!IsSessionCurrent()) return;
+                    AvailableTenants.Add(tenant);
+                }
+                if (!IsSessionCurrent()) return;
+                SelectedTenant = createdTenant;
+            }
+            if (IsSessionCurrent()) Status = "Tenant został utworzony.";
+        }
+        catch (Exception)
+        {
+            if (IsSessionCurrent())
+                Status = "Tenant został utworzony, ale nie udało się odświeżyć listy tenantów.";
+        }
+    }
+
+    [RelayCommand]
+    private void NewUser()
+    {
+        if (!IsLoggedIn) return;
+        _navigationService.ShowNewUserWindow();
     }
 
     [RelayCommand]
@@ -92,172 +474,146 @@ public partial class MainViewModel : ObservableObject
         _tokenStore.AccessToken = null;
         IsLoggedIn = false;
     }
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task LoadInvoicesAsync()
     {
-        if (_rateLimitUntil is DateTimeOffset until)
+        if (IsLoading) return;
+        var snapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (snapshot is not ApiRequestContext context || !HasTenantHeaderContext(context) || !IsCurrentContext(context)) return;
+        if (_rateLimitUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow)
         {
-            var remaining = until - DateTimeOffset.UtcNow;
-
-            if (remaining > TimeSpan.Zero)
-            {
-                Status = $"Limit KSeF. Spróbuj ponownie za około {Math.Ceiling(remaining.TotalMinutes):0} min.";
-                return;
-            }
-
-            _rateLimitUntil = null;
-        }
-
-        if (IsLoading)
+            Status = $"Limit KSeF. Spróbuj ponownie za około {Math.Ceiling((until - DateTimeOffset.UtcNow).TotalMinutes):0} min.";
             return;
-
+        }
+        _rateLimitUntil = null;
+        long operationId = ++_invoiceReadOperationId;
+        _invoiceLoadingOwnerId = operationId;
+        _invoiceOperationIsImport = false;
+        IsLoading = true;
+        Status = "Pobieranie faktur...";
         try
         {
-            var direction = SelectedTabIndex switch
-            {
-                0 => InvoiceDirection.Sales,
-                1 => InvoiceDirection.Purchase,
-                _ => throw new InvalidOperationException(
-                    "Nieznana zakładka faktur.")
-            };
-            IsLoading = true;
-            Status = "Pobieranie faktur...";
-
-            var count = await RefreshInvoicesAsync(direction);
-
-            Status = $"Pobrano {count} faktur z bazy danych.";
+            var direction = SelectedTabIndex switch { 0 => InvoiceDirection.Sales, 1 => InvoiceDirection.Purchase, _ => throw new InvalidOperationException("Nieznana zakładka faktur.") };
+            if (await RefreshInvoicesAsync(context, direction, operationId) && OwnsInvoiceLoading(context, operationId))
+                Status = $"Pobrano {(direction == InvoiceDirection.Sales ? SalesInvoices.Count : PurchaseInvoices.Count)} faktur z bazy danych.";
         }
         catch (KsefRateLimitException ex)
         {
+            if (!OwnsInvoiceLoading(context, operationId)) return;
             if (ex.RetryAfter is TimeSpan delay)
             {
                 _rateLimitUntil = DateTimeOffset.UtcNow + delay;
-
                 Status = $"Limit KSeF. Spróbuj ponownie za około {Math.Ceiling(delay.TotalMinutes):0} min.";
             }
-            else
-            {
-                Status = "Przekroczono limit KSeF. Spróbuj ponownie później.";
-            }
+            else Status = "Przekroczono limit KSeF. Spróbuj ponownie później.";
         }
         catch (Exception ex)
         {
-            Status = $"Błąd: {ex.Message}";
+            if (OwnsInvoiceLoading(context, operationId)) Status = $"Błąd: {ex.Message}";
         }
-        finally
-        {
-            IsLoading = false;
-        }
+        finally { FinishInvoiceLoading(context, operationId); }
     }
 
     [RelayCommand]
-    private async Task LoadInvoiceXmlAsync()
+    private async Task ConfigureKsefTokenAsync()
     {
-        InvoiceDto? selectedInvoice = SelectedTabIndex switch
-        {
-            0 => SelectedSalesInvoice,
-            1 => SelectedPurchaseInvoice,
-            _ => null
-        };
+        if (!IsLoggedIn || !_tenantContext.HasTenant) return;
 
-        if (selectedInvoice is null)
-        {
-            Status = "Najpierw zaznacz fakturę.";
-            return;
-        }
+        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
+
+        string? token = _ksefTokenWindowService.ShowTokenDialog();
+
+        if (string.IsNullOrWhiteSpace(token)) return;
 
         try
         {
-            Status = "Pobieranie XML faktury...";
+            if (!IsCurrentContext(context)) return;
 
-            string xml = await _invoiceApiClient.GetInvoiceXmlAsync(
-                selectedInvoice.KsefNumber);
+            Guid credentialId = await _ksefCredentialsApiClient.SaveTokenAsync(context, token);
+            if (!IsCurrentContext(context)) return;
 
-            Status = $"Pobrano XML faktury {selectedInvoice.InvoiceNumber}.";
+            HasKsefToken = true;
+            KsefCredentialId = credentialId;
+            RefreshKsefCredentials();
+
+            Status = "Token KSeF został zapisany.";
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
-            Status = $"Błąd pobierania XML: {ex.Message}";
+            if (IsCurrentContext(context))
+                Status = $"Błąd zapisywania tokenu KSeF: {ex.Message}";
+        }
+        finally
+        {
+            token = null;
         }
     }
 
     [RelayCommand]
     private async Task ImportFromKsefAsync()
     {
-        if (IsLoading)
-            return;
-
-        if (!IsLoggedIn)
-        {
-            Status = "Najpierw zaloguj się do aplikacji.";
-            return;
-        }
-
-        if (DateFrom.Date > DateTo.Date)
-        {
-            Status = "Data początkowa nie może być późniejsza niż końcowa.";
-            return;
-        }
-
+        if (IsLoading) return;
+        if (!IsLoggedIn) { Status = "Najpierw zaloguj się do aplikacji."; return; }
+        var snapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (snapshot is not ApiRequestContext context || !HasTenantHeaderContext(context) || !IsCurrentContext(context)) return;
+        if (DateFrom.Date > DateTo.Date) { Status = "Data początkowa nie może być późniejsza niż końcowa."; return; }
+        var direction = SelectedTabIndex switch { 0 => InvoiceDirection.Sales, 1 => InvoiceDirection.Purchase, _ => throw new InvalidOperationException("Nieznana zakładka faktur.") };
+        DateOnly from = DateOnly.FromDateTime(DateFrom);
+        DateOnly to = DateOnly.FromDateTime(DateTo);
+        long operationId = ++_invoiceReadOperationId;
+        _invoiceLoadingOwnerId = operationId;
+        _invoiceOperationIsImport = true;
+        IsLoading = true;
+        Status = "Trwa import faktur z KSeF. Proszę czekać...";
+        InvoicePackageReadResult? imported = null;
         try
         {
-            var direction = SelectedTabIndex switch
-            {
-                0 => InvoiceDirection.Sales,
-                1 => InvoiceDirection.Purchase,
-                _ => throw new InvalidOperationException(
-                    "Nieznana zakładka faktur.")
-            };
-
-            IsLoading = true;
-            Status = "Trwa import faktur z KSeF. Proszę czekać...";
-
-            var result = await _invoiceApiClient.ImportFromKsefAsync(DateOnly.FromDateTime(DateFrom), DateOnly.FromDateTime(DateTo), direction);
-
-            var count = await RefreshInvoicesAsync(direction);
-
-            Status = $"Import zakończony. Zaimportowano: {result.ImportedCount}, pominięto: {result.SkippedCount}. Faktur na liście: {count}.";
+            imported = await _invoiceApiClient.ImportFromKsefAsync(context, from, to, direction);
+            if (!OwnsInvoiceLoading(context, operationId)) return;
+            bool refreshed = await RefreshInvoicesAsync(context, direction, operationId);
+            if (!OwnsInvoiceLoading(context, operationId)) return;
+            Status = refreshed
+                ? $"Import zakończony. Zaimportowano: {imported.ImportedCount}, pominięto: {imported.SkippedCount}. Faktur na liście: {(direction == InvoiceDirection.Sales ? SalesInvoices.Count : PurchaseInvoices.Count)}."
+                : "Import zakończony poprawnie. Filtr zmienił się podczas odświeżania. Pobierz faktury ponownie.";
         }
         catch (Exception ex)
         {
-            Status = $"Błąd importu KSeF: {ex.Message}";
+            if (OwnsInvoiceLoading(context, operationId))
+                Status = imported is null ? $"Import nie powiódł się: {ex.Message}" : $"Import zakończony poprawnie, ale odświeżenie listy nie powiodło się: {ex.Message}";
         }
-        finally
-        {
-            IsLoading = false;
-        }
+        finally { FinishInvoiceLoading(context, operationId); }
     }
 
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task LoadInvoicePdfAsync()
     {
-        // Anulujemy poprzednie pobieranie PDF.
-        _invoicePdfCancellationTokenSource?.Cancel();
+        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
 
-        var cancellationTokenSource = new CancellationTokenSource();
+        InvoiceDto? selectedInvoice = GetActiveInvoice();
+        if (selectedInvoice is null) return;
+
+        long requestId = _invoicePdfRequestId;
+        var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
         _invoicePdfCancellationTokenSource = cancellationTokenSource;
-
-        var cancellationToken = cancellationTokenSource.Token;
-
-        InvoiceDto? selectedInvoice = SelectedTabIndex switch
-        {
-            0 => SelectedSalesInvoice,
-            1 => SelectedPurchaseInvoice,
-            _ => null
-        };
-
-        if (selectedInvoice is null)
-            return;
+        var pdfContext = context with { CancellationToken = cancellationTokenSource.Token };
 
         try
         {
+            if (!IsCurrentInvoicePdfRequest(requestId, selectedInvoice, pdfContext)) return;
+
             Status = "Pobieranie PDF faktury...";
 
             byte[] pdfBytes = await _invoiceApiClient.GetInvoicePdfAsync(
-                selectedInvoice.KsefNumber,
-                cancellationToken);
+                pdfContext,
+                selectedInvoice.KsefNumber);
 
-            cancellationToken.ThrowIfCancellationRequested();
+            pdfContext.CancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentInvoicePdfRequest(requestId, selectedInvoice, pdfContext)) return;
 
             string pdfPath = Path.Combine(
     Path.GetTempPath(),
@@ -268,9 +624,9 @@ public partial class MainViewModel : ObservableObject
                 await File.WriteAllBytesAsync(
                     pdfPath,
                     pdfBytes,
-                    cancellationToken);
+                    pdfContext.CancellationToken);
 
-                cancellationToken.ThrowIfCancellationRequested();
+                pdfContext.CancellationToken.ThrowIfCancellationRequested();
             }
             catch
             {
@@ -294,24 +650,24 @@ public partial class MainViewModel : ObservableObject
                 throw;
             }
 
-            // Usuwamy poprzedni PDF.
-            DeletePreviousTemporaryPdf();
+            if (!IsCurrentInvoicePdfRequest(requestId, selectedInvoice, pdfContext))
+            {
+                DeleteUnboundTemporaryPdf(pdfPath);
+                return;
+            }
 
-            // Zapamiętujemy nowy plik.
             _currentTemporaryPdfPath = pdfPath;
-
-            // Wyświetlamy nowy dokument.
             SelectedInvoicePdfPath = pdfPath;
 
             Status = $"Wyświetlono PDF faktury {selectedInvoice.InvoiceNumber}.";
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (pdfContext.CancellationToken.IsCancellationRequested)
         {
             // Poprzednie pobieranie zostało anulowane.
         }
         catch (Exception ex)
         {
-            if (!cancellationToken.IsCancellationRequested)
+            if (IsCurrentInvoicePdfRequest(requestId, selectedInvoice, pdfContext))
                 Status = $"Błąd pobierania PDF: {ex.Message}";
         }
         finally
@@ -327,64 +683,537 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    partial void OnSelectedSalesInvoiceChanged(InvoiceDto? value)
+    [RelayCommand]
+    private async Task AuthenticateKsefTokenAsync()
     {
-        _invoicePdfCancellationTokenSource?.Cancel();
-
-        if (value is null)
+        if (!IsLoggedIn || !_tenantContext.HasTenant)
         {
-            DeletePreviousTemporaryPdf();
+            Status = "Najpierw zaloguj się i wybierz podmiot.";
             return;
         }
 
-        LoadInvoiceXmlCommand.Execute(null);
-        LoadInvoicePdfCommand.Execute(null);
+        if (IsLoading) return;
+
+        if (!HasKsefToken || KsefCredentialId is null)
+        {
+            Status = "Najpierw skonfiguruj token KSeF.";
+            return;
+        }
+
+        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
+
+        try
+        {
+            if (!IsCurrentContext(context)) return;
+
+            IsLoading = true;
+            Status = "Trwa uwierzytelnianie tokenem KSeF...";
+
+            await _authenticationApiClient.AuthenticateKsefTokenAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            Status = "Uwierzytelnianie tokenem KSeF zakończone pomyślnie.";
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentContext(context))
+                Status = $"Błąd uwierzytelniania tokenem KSeF: {ex.Message}";
+        }
+        finally
+        {
+            if (IsCurrentContext(context))
+                IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SavePreferredKsefCredentialAsync()
+    {
+        if (!IsLoggedIn || !_tenantContext.HasTenant)
+        {
+            Status = "Najpierw zaloguj się i wybierz podmiot.";
+            return;
+        }
+
+        if (SelectedKsefCredential is null)
+        {
+            Status = "Wybierz token lub certyfikat KSeF.";
+            return;
+        }
+
+        if (IsLoading) return;
+
+        try
+        {
+            IsLoading = true;
+
+            Guid tenantId = _tenantContext.TenantId ?? throw new InvalidOperationException("Nie wybrano podmiotu.");
+            Guid credentialId = SelectedKsefCredential.CredentialId;
+
+            await _tenantApiClient.SetPreferredKsefCredentialIdAsync(tenantId, credentialId);
+
+            PreferredKsefCredentialId = credentialId;
+
+            Status = $"Zapisano preferowane poświadczenie KSeF: {SelectedKsefCredential.Name}.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Błąd zapisywania preferowanego poświadczenia KSeF: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    partial void OnSelectedSalesInvoiceChanged(InvoiceDto? value)
+    {
+        if (!_isClearingContextDependentState && SelectedTabIndex == 0)
+            HandleActiveInvoiceChanged();
+    }
+
+    partial void OnSelectedPurchaseInvoiceChanged(InvoiceDto? value)
+    {
+        if (!_isClearingContextDependentState && SelectedTabIndex == 1)
+            HandleActiveInvoiceChanged();
+    }
+
+    partial void OnSelectedTabIndexChanged(int value)
+    {
+        HandleActiveInvoiceChanged();
+    }
+
+    private InvoiceDto? GetActiveInvoice() => SelectedTabIndex switch
+    {
+        0 => SelectedSalesInvoice,
+        1 => SelectedPurchaseInvoice,
+        _ => null
+    };
+
+    private void HandleActiveInvoiceChanged()
+    {
+        _invoicePdfRequestId++;
+        _invoicePdfCancellationTokenSource?.Cancel();
+        DeletePreviousTemporaryPdf();
+
+        if (GetActiveInvoice() is not null)
+            LoadInvoicePdfCommand.Execute(null);
+    }
+
+    private bool IsCurrentInvoicePdfRequest(long requestId, InvoiceDto invoice, ApiRequestContext context)
+    {
+        return IsCurrentContext(context)
+            && !context.CancellationToken.IsCancellationRequested
+            && requestId == _invoicePdfRequestId
+            && ReferenceEquals(GetActiveInvoice(), invoice);
+    }
+
+    private static bool HasTenantHeaderContext(ApiRequestContext context)
+    {
+        return context.Scope == ApiRequestScope.TenantHeader
+            && !string.IsNullOrWhiteSpace(context.AccessToken)
+            && context.TenantId is Guid tenantId
+            && tenantId != Guid.Empty;
+    }
+
+    private ApiRequestContext? CaptureContext(ApiRequestScope scope)
+    {
+        var sessionBefore = _tokenStore.GetSessionSnapshot();
+        ContextSnapshot contextSnapshot;
+
+        lock (_contextSync)
+        {
+            if (_isCleanedUp || sessionBefore.SessionVersion != _contextSessionVersion)
+                return null;
+
+            contextSnapshot = new ContextSnapshot(
+                _contextGeneration,
+                _contextSessionVersion,
+                _contextTenantId,
+                _contextCancellationTokenSource.Token);
+        }
+
+        var sessionAfter = _tokenStore.GetSessionSnapshot();
+        if (sessionAfter.SessionVersion != sessionBefore.SessionVersion)
+            return null;
+
+        lock (_contextSync)
+        {
+            if (_isCleanedUp
+                || contextSnapshot.Generation != _contextGeneration
+                || contextSnapshot.SessionVersion != _contextSessionVersion
+                || contextSnapshot.TenantId != _contextTenantId
+                || contextSnapshot.CancellationToken.IsCancellationRequested)
+                return null;
+        }
+
+        return new ApiRequestContext(
+            contextSnapshot.Generation,
+            sessionBefore.SessionVersion,
+            contextSnapshot.TenantId,
+            sessionBefore.AccessToken,
+            contextSnapshot.CancellationToken,
+            scope);
+    }
+
+    private bool IsCurrentContext(ApiRequestContext context)
+    {
+        lock (_contextSync)
+        {
+            return !_isCleanedUp
+                && !context.CancellationToken.IsCancellationRequested
+                && context.Generation == _contextGeneration
+                && context.SessionVersion == _contextSessionVersion
+                && context.TenantId == _contextTenantId;
+        }
+    }
+
+    private bool AdvanceContextGeneration(Guid? tenantId, bool tenantChanged, out long generation)
+    {
+        CancellationTokenSource previousCancellationTokenSource;
+
+        lock (_contextSync)
+        {
+            if (_isCleanedUp)
+            {
+                generation = _contextGeneration;
+                return false;
+            }
+
+            _contextGeneration++;
+            if (tenantChanged)
+                _contextTenantId = tenantId;
+
+            generation = _contextGeneration;
+            previousCancellationTokenSource = _contextCancellationTokenSource;
+            _contextCancellationTokenSource = new CancellationTokenSource();
+        }
+
+        CancelAndDisposeContext(previousCancellationTokenSource);
+
+        return true;
+    }
+
+    private bool AdvanceSessionContext(long sessionVersion)
+    {
+        CancellationTokenSource? previousCancellationTokenSource = null;
+
+        lock (_contextSync)
+        {
+            if (_isCleanedUp || sessionVersion < _contextSessionVersion)
+                return false;
+
+            if (sessionVersion > _contextSessionVersion)
+            {
+                _contextSessionVersion = sessionVersion;
+                _contextGeneration++;
+                previousCancellationTokenSource = _contextCancellationTokenSource;
+                _contextCancellationTokenSource = new CancellationTokenSource();
+            }
+        }
+
+        if (previousCancellationTokenSource is not null)
+            CancelAndDisposeContext(previousCancellationTokenSource);
+
+        return true;
+    }
+
+    private void ScheduleSessionUi(long sessionVersion)
+    {
+        if (_tokenStore.GetSessionSnapshot().SessionVersion != sessionVersion)
+            return;
+
+        lock (_contextSync)
+        {
+            if (_isCleanedUp
+                || _contextSessionVersion != sessionVersion
+                || sessionVersion <= _contextSessionUiScheduledVersion)
+                return;
+
+            _contextSessionUiScheduledVersion = sessionVersion;
+        }
+
+        System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            if (!TryMarkSessionUiHandled(sessionVersion, out var sessionSnapshot)) return;
+
+            IsLoggedIn = !string.IsNullOrWhiteSpace(sessionSnapshot.AccessToken);
+            ClearContextDependentState();
+            AvailableTenants.Clear();
+            SelectedTenant = null;
+            _tenantContext.SetTenant(null);
+
+            if (IsLoggedIn)
+                await LoadTenantsAsync();
+        });
+    }
+
+    private bool TryMarkSessionUiHandled(long sessionVersion, out (string? AccessToken, long SessionVersion) sessionSnapshot)
+    {
+        sessionSnapshot = _tokenStore.GetSessionSnapshot();
+        if (sessionSnapshot.SessionVersion != sessionVersion)
+            return false;
+
+        lock (_contextSync)
+        {
+            if (_isCleanedUp
+                || _contextSessionVersion != sessionVersion
+                || _contextSessionUiHandledVersion >= sessionVersion)
+                return false;
+
+            _contextSessionUiHandledVersion = sessionVersion;
+            return true;
+        }
+    }
+
+    private bool IsCurrentContextGeneration(long generation)
+    {
+        lock (_contextSync)
+            return !_isCleanedUp && generation == _contextGeneration;
+    }
+
+    private static void CancelAndDisposeContext(CancellationTokenSource cancellationTokenSource)
+    {
+        try
+        {
+            cancellationTokenSource.Cancel();
+        }
+        catch (AggregateException ex)
+        {
+            System.Diagnostics.Trace.TraceError("Context cancellation callback failed: {0}", ex);
+        }
+        finally
+        {
+            cancellationTokenSource.Dispose();
+        }
     }
 
     private void OnTokenChanged(object? sender, EventArgs e)
     {
-        System.Windows.Application.Current.Dispatcher.Invoke(() =>
-        {
-            IsLoggedIn = !string.IsNullOrWhiteSpace(_tokenStore.AccessToken);
-        });
+        if (e is not TokenChangedEventArgs tokenChangedEventArgs)
+            return;
+
+        long sessionVersion = tokenChangedEventArgs.SessionVersion;
+        if (!AdvanceSessionContext(sessionVersion))
+            return;
+
+        ScheduleSessionUi(sessionVersion);
+    }
+
+    private void ClearContextDependentState()
+    {
+        _invoiceReadOperationId++;
+        _invoiceLoadingOwnerId = null;
+        _invoiceReadCancellationTokenSource?.Cancel();
+        _invoiceReadCancellationTokenSource = null;
+        ClearInvoiceResults();
+        IsLoading = false;
+        HasKsefToken = false;
+        KsefCredentialId = null;
+        HasKsefCertificate = false;
+        KsefCertificateCredentialId = null;
+        AvailableKsefCredentials.Clear();
+        SelectedKsefCredential = null;
+        PreferredKsefCredentialId = null;
+    }
+
+    partial void OnSelectedTenantChanged(TenantDto? value)
+    {
+        _tenantContext.SetTenant(value);
+    }
+
+    partial void OnHasKsefTokenChanged(bool value)
+    {
+        OnPropertyChanged(nameof(KsefTokenStatus));
     }
 
     private void DeletePreviousTemporaryPdf()
     {
-        if (_currentTemporaryPdfPath is null)
-            return;
-
-        string path = _currentTemporaryPdfPath;
-
-        // Najpierw odłączamy dokument od PDFViewer.
+        string? path = _currentTemporaryPdfPath;
+        _currentTemporaryPdfPath = null;
         SelectedInvoicePdfPath = null;
 
+        if (path is not null)
+            _temporaryPdfPathsPendingDeletion.Add(path);
+
+        if (_temporaryPdfPathsPendingDeletion.Count > 0)
+            System.Windows.Application.Current.Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.ContextIdle,
+                new Action(DeletePendingTemporaryPdfFiles));
+    }
+
+    private void DeletePendingTemporaryPdfFiles()
+    {
+        foreach (string path in _temporaryPdfPathsPendingDeletion.ToArray())
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+
+                _temporaryPdfPathsPendingDeletion.Remove(path);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    private void DeleteUnboundTemporaryPdf(string path)
+    {
         try
         {
             if (File.Exists(path))
                 File.Delete(path);
-
-            _currentTemporaryPdfPath = null;
         }
         catch (IOException)
         {
-            // PDFViewer może jeszcze korzystać z pliku.
-            // Zachowujemy ścieżkę, aby móc ponowić usuwanie.
+            _temporaryPdfPathsPendingDeletion.Add(path);
+            System.Windows.Application.Current.Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.ContextIdle,
+                new Action(DeletePendingTemporaryPdfFiles));
         }
         catch (UnauthorizedAccessException)
         {
-            // Nie udało się usunąć pliku.
-            // Zachowujemy ścieżkę.
+            _temporaryPdfPathsPendingDeletion.Add(path);
+            System.Windows.Application.Current.Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.ContextIdle,
+                new Action(DeletePendingTemporaryPdfFiles));
+        }
+    }
+
+    [RelayCommand]
+    private async Task ConfigureKsefCertificateAsync()
+    {
+        if (!IsLoggedIn || !_tenantContext.HasTenant)
+        {
+            Status = "Najpierw zaloguj się i wybierz firmę.";
+            return;
+        }
+
+        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
+        long operationId = Interlocked.Increment(ref _certificateSaveOperationId);
+
+        var files = _certificateSelectionWindowService.SelectCertificate();
+        if (files == null) return;
+        if (!IsCurrentContext(context) || context.CancellationToken.IsCancellationRequested) return;
+
+        try
+        {
+            if (!IsCurrentContext(context)) return;
+
+            IsLoading = true;
+            Status = "Zapisywanie certyfikatu KSeF...";
+
+            var (certificatePem, encryptedPrivateKeyPem) = ReadCertificateFiles(files);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentContext(context)) return;
+
+            Guid credentialId = await _authenticationApiClient.SaveKsefCertificateAsync(context, certificatePem, encryptedPrivateKeyPem, files.Password!);
+            if (!IsCurrentContext(context)) return;
+
+            HasKsefCertificate = true;
+            KsefCertificateCredentialId = credentialId;
+            RefreshKsefCredentials();
+            Status = $"Certyfikat KSeF został zapisany. CredentialId: {credentialId}";
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception)
+        {
+            if (IsCurrentContext(context) && operationId == Volatile.Read(ref _certificateSaveOperationId))
+                Status = "Nie udało się zapisać certyfikatu KSeF. Sprawdź poprawność plików i hasła oraz połączenie z serwerem.";
+        }
+        finally
+        {
+            if (IsCurrentContext(context) && operationId == Volatile.Read(ref _certificateSaveOperationId))
+                IsLoading = false;
+        }
+    }
+    private static (string CertificatePem, string EncryptedPrivateKeyPem) ReadCertificateFiles(KsefCertificateFiles files)
+    {
+        if (!File.Exists(files.CertificatePath)) throw new FileNotFoundException("Nie znaleziono pliku certyfikatu.", files.CertificatePath);
+        if (!File.Exists(files.PrivateKeyPath)) throw new FileNotFoundException("Nie znaleziono pliku klucza prywatnego.", files.PrivateKeyPath);
+
+        string certificatePem = File.ReadAllText(files.CertificatePath);
+        string encryptedPrivateKeyPem = File.ReadAllText(files.PrivateKeyPath);
+
+        return (certificatePem, encryptedPrivateKeyPem);
+    }
+
+    [RelayCommand]
+    private async Task AuthenticateKsefCertificateAsync()
+    {
+        if (!IsLoggedIn || !_tenantContext.HasTenant)
+        {
+            Status = "Najpierw zaloguj się i wybierz podmiot.";
+            return;
+        }
+
+        if (IsLoading) return;
+
+        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
+
+        try
+        {
+            if (!IsCurrentContext(context)) return;
+
+            IsLoading = true;
+            Status = "Uwierzytelnianie w KSeF za pomocą certyfikatu...";
+
+            await _authenticationApiClient.AuthenticateKsefCertificateAsync(context);
+            if (!IsCurrentContext(context)) return;
+
+            Status = "Uwierzytelnianie certyfikatem KSeF zakończone pomyślnie.";
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentContext(context))
+                Status = $"Błąd uwierzytelniania certyfikatem KSeF: {ex.Message}";
+        }
+        finally
+        {
+            if (IsCurrentContext(context))
+                IsLoading = false;
         }
     }
 
     public void Cleanup()
     {
-        // Anulujemy ewentualne pobieranie PDF.
-        _invoicePdfCancellationTokenSource?.Cancel();
+        CancellationTokenSource contextCancellationTokenSource;
 
-        // Odłączamy dokument od kontrolki PDFViewer
-        // i usuwamy plik tymczasowy.
+        lock (_contextSync)
+        {
+            if (_isCleanedUp) return;
+
+            _isCleanedUp = true;
+            _contextGeneration++;
+            _tokenStore.TokenChanged -= OnTokenChanged;
+            _tenantContext.TenantChanged -= OnTenantChanged;
+            contextCancellationTokenSource = _contextCancellationTokenSource;
+        }
+
+        CancelAndDisposeContext(contextCancellationTokenSource);
+        _invoiceReadOperationId++;
+        _invoiceLoadingOwnerId = null;
+        _invoiceReadCancellationTokenSource?.Cancel();
+        _invoiceReadCancellationTokenSource = null;
+
+        _invoicePdfRequestId++;
+        _invoicePdfCancellationTokenSource?.Cancel();
         DeletePreviousTemporaryPdf();
     }
 

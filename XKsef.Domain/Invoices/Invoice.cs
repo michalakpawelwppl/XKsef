@@ -9,4 +9,10 @@ public class Invoice
     public DateOnly IssueDate { get; set; }
     public decimal GrossAmount { get; set; }
     public string Currency { get; set; } = "PLN";
+    public string? BuyerNip { get; set; }
+    public string? BuyerName { get; set; }
+    public decimal? NetAmount { get; set; }
+    public decimal? VatAmount { get; set; }
+    public decimal? VatAmountPln { get; set; }
+    public DateTimeOffset? InvoicingDate { get; set; }
 }

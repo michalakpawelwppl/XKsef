@@ -7,32 +7,12 @@
         Width="380"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize">
-
     <StackPanel Margin="25">
-
         <TextBlock Text="Login" Margin="0,0,0,5"/>
-
-        <TextBox x:Name="LoginTextBox"
-                 Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}"
-                 Margin="0,0,0,15"/>
-
+        <TextBox x:Name="LoginTextBox" Text="{Binding Login, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,15"/>
         <TextBlock Text="Hasło" Margin="0,0,0,5"/>
-
-        <PasswordBox x:Name="PasswordInput"
-             behaviors:PasswordBoxHelper.BoundPassword="{Binding Password, Mode=TwoWay}"
-             Margin="0,0,0,20"/>
-
-        <Button Content="Zaloguj"
-        Width="100"
-        Height="30"
-        HorizontalAlignment="Right"
-        Command="{Binding ExecuteLoginCommand}"
-        CommandParameter="{Binding Password}"/>
-
-        <TextBlock Text="{Binding ErrorMessage}"
-           Foreground="Red"
-           TextWrapping="Wrap"
-           Margin="0,15,0,0"
-           HorizontalAlignment="Center"/>
+        <PasswordBox x:Name="PasswordInput" behaviors:PasswordBoxHelper.BoundPassword="{Binding Password, Mode=TwoWay}" Margin="0,0,0,20"/>
+        <Button Content="Zaloguj" Width="100" Height="30" HorizontalAlignment="Right" Command="{Binding ExecuteLoginCommand}" CommandParameter="{Binding Password}"/>
+        <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" TextWrapping="Wrap" Margin="0,15,0,0" HorizontalAlignment="Center"/>
     </StackPanel>
 </Window>

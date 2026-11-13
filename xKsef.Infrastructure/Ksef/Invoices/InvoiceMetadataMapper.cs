@@ -6,7 +6,7 @@ namespace xKsef.Infrastructure.Invoices;
 
 internal static class InvoiceMetadataMapper
 {
-    public static ExportedInvoiceMetadata Map(InvoiceSummary source)
+    public static ExportedInvoiceMetadata Map(InvoiceSummary source, bool hasVatAmount = true, bool hasInvoicingDate = true)
     {
         ArgumentNullException.ThrowIfNull(source);
 
@@ -19,7 +19,9 @@ internal static class InvoiceMetadataMapper
         {
             KsefNumber = source.KsefNumber,
             FileName = $"{source.KsefNumber}.xml",
-            InvoiceHash = source.InvoiceHash
+            InvoiceHash = source.InvoiceHash,
+            VatAmountPln = hasVatAmount ? source.VatAmount : null,
+            InvoicingDate = hasInvoicingDate ? source.InvoicingDate : null
         };
     }
 
@@ -32,6 +34,6 @@ internal static class InvoiceMetadataMapper
             throw new InvalidOperationException("Metadane paczki nie zawierają listy faktur.");
         }
 
-        return source.Invoices.Select(Map).ToList();
+        return source.Invoices.Select(invoice => Map(invoice)).ToList();
     }
 }

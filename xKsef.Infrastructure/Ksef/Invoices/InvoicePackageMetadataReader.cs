@@ -23,7 +23,26 @@ internal static class InvoicePackageMetadataReader
     {
         var metadata = Read(json);
 
-        return InvoiceMetadataMapper.Map(metadata);
+        if (metadata.Invoices is null)
+            throw new InvalidOperationException("Metadane paczki nie zawierają listy faktur.");
+
+        // SDK value types cannot distinguish an omitted JSON field from its default value.
+        using var document = JsonDocument.Parse(json);
+        var entries = document.RootElement.EnumerateObject()
+            .Last(property => string.Equals(property.Name, "invoices", StringComparison.OrdinalIgnoreCase))
+            .Value.EnumerateArray().ToArray();
+
+        return metadata.Invoices.Select((invoice, index) => InvoiceMetadataMapper.Map(
+            invoice,
+            HasValue(entries[index], "vatAmount"),
+            HasValue(entries[index], "invoicingDate"))).ToList();
+    }
+
+    private static bool HasValue(JsonElement invoice, string name)
+    {
+        return invoice.EnumerateObject().Any(property =>
+            string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)
+            && property.Value.ValueKind != JsonValueKind.Null);
     }
 
     public static async Task<IReadOnlyList<ExportedInvoiceMetadata>> ReadFromFileAsync(string filePath,CancellationToken cancellationToken = default)

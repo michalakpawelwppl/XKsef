@@ -91,7 +91,9 @@ internal static class InvoicePackageValidator
 
         return new ValidatedInvoice(
             invoice.KsefNumber,
-            xmlBytes);
+            xmlBytes,
+            invoice.VatAmountPln,
+            invoice.InvoicingDate);
     }
 
     public static async Task<IReadOnlyList<ValidatedInvoice>>

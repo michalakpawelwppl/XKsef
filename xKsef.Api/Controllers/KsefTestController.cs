@@ -1,9 +1,13 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using xKsef.Api.Authorization;
 using xKsef.Infrastructure.Ksef.Invoices;
 
 namespace xKsef.Api.Controllers;
 
 [ApiController]
+[Authorize]
+[ServiceFilter(typeof(TenantAuthorizationFilter))]
 [Route("api/ksef-test")]
 public class KsefTestController : ControllerBase
 {
@@ -25,11 +29,14 @@ public class KsefTestController : ControllerBase
             return BadRequest(
                 "Data początkowa nie może być późniejsza od końcowej.");
         }
+        if (HttpContext.Items["TenantId"] is not Guid tenantId)
+            return Forbid();
 
-        var count = await _invoiceService.GetInvoiceCountAsync(
-            from,
-            to,
-            cancellationToken);
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+        var count = await _invoiceService.GetInvoiceCountAsync(userId, tenantId, from, to, cancellationToken);
 
         return Ok(new
         {

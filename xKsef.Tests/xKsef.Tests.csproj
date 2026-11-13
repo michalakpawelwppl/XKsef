@@ -1,13 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.13" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -15,15 +17,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\xKsef.Api\xKsef.Api.csproj" />
     <ProjectReference Include="..\xKsef.Infrastructure\xKsef.Infrastructure.csproj" />
+    <ProjectReference Include="..\xKsef.Wpf\xKsef.Wpf.csproj" />
   </ItemGroup>
 	<ItemGroup>
 		<None Include="..\xKsef.Infrastructure\Visualization\*.xsl" Link="Visualization\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\xKsef.Wpf\Views\MainWindow.xaml" Link="Wpf\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
     <None Update="appsettings.Test.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using xKsef.Api.Authorization;
 using xKsef.Application.Invoices;
 using xKsef.Application.Invoices.Pdf;
 
@@ -7,6 +8,7 @@ namespace xKsef.Api.Controllers;
 
 [ApiController]
 [Authorize]
+[ServiceFilter(typeof(TenantAuthorizationFilter))]
 [Route("api/invoices")]
 public sealed class InvoicePdfController : ControllerBase
 {
@@ -14,10 +16,7 @@ public sealed class InvoicePdfController : ControllerBase
     private readonly IInvoicePdfGenerator _pdfGenerator;
     private readonly IInvoiceService _invoiceService;
 
-    public InvoicePdfController(
-        IInvoiceRepository invoiceRepository,
-        IInvoicePdfGenerator pdfGenerator,
-        IInvoiceService invoiceService)
+    public InvoicePdfController(IInvoiceRepository invoiceRepository, IInvoicePdfGenerator pdfGenerator, IInvoiceService invoiceService)
     {
         _invoiceRepository = invoiceRepository;
         _pdfGenerator = pdfGenerator;
@@ -25,39 +24,18 @@ public sealed class InvoicePdfController : ControllerBase
     }
 
     [HttpGet("{ksefNumber}/pdf")]
-    public async Task<IActionResult> GetPdfAsync(
-    string ksefNumber,
-    CancellationToken cancellationToken)
+    public async Task<IActionResult> GetPdfAsync(string ksefNumber, CancellationToken cancellationToken)
     {
-        var invoice = await _invoiceRepository.GetByKsefNumberAsync(
-            ksefNumber,
-            cancellationToken);
+        if (HttpContext.Items["TenantId"] is not Guid tenantId)
+            return Forbid();
 
-        byte[] xmlBytes;
+        var invoice = await _invoiceRepository.GetByKsefNumberAsync(tenantId, ksefNumber, cancellationToken);
 
-        if (invoice is not null)
-        {
-            // Faktura jest w lokalnej bazie danych.
-            xmlBytes = invoice.XmlBytes;
-        }
-        else
-        {
-            // Faktury nie ma w bazie — pobieramy XML z KSeF.
-            string xml = await _invoiceService.GetInvoiceXmlAsync(
-                ksefNumber,
-                cancellationToken);
+        if (invoice is null)
+            return NotFound();
 
-            xmlBytes = System.Text.Encoding.UTF8.GetBytes(xml);
-        }
+        byte[] pdf = await _pdfGenerator.GenerateAsync(invoice.XmlBytes, ksefNumber, cancellationToken);
 
-        byte[] pdf = await _pdfGenerator.GenerateAsync(
-            xmlBytes,
-            ksefNumber,
-            cancellationToken);
-
-        return File(
-            pdf,
-            "application/pdf",
-            "invoice.pdf");
+        return File(pdf, "application/pdf", "invoice.pdf");
     }
 }

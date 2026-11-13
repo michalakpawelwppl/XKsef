@@ -1,7 +1,11 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using xKsef.Application.Exceptions;
+using xKsef.Application.Invoices;
+using xKsef.Infrastructure.Invoices;
+using xKsef.Tests.Infrastructure;
 using xKsef.Domain.Invoices;
+using xKsef.Domain.Tenants;
 using xKsef.Infrastructure.Persistence;
 
 namespace xKsef.Tests.Integration;
@@ -26,6 +30,8 @@ public sealed class InvoiceImportTransactionTests
             .UseSqlServer(connectionString)
             .Options;
 
+        await using var testTenant = await TestTenant.CreateAsync(options);
+
         string ksefNumber = $"TEST-ROLLBACK-{Guid.NewGuid():N}";
 
         await using var dbContext = new AppDbContext(options);
@@ -34,6 +40,7 @@ public sealed class InvoiceImportTransactionTests
 
         var invoice = new StoredInvoice
         {
+            TenantId = testTenant.TenantId,
             KsefNumber = ksefNumber,
             InvoiceNumber = "TEST/ROLLBACK/001",
             IssueDate = DateOnly.FromDateTime(DateTime.Today),
@@ -90,6 +97,8 @@ public sealed class InvoiceImportTransactionTests
             .UseSqlServer(connectionString)
             .Options;
 
+        await using var testTenant = await TestTenant.CreateAsync(options);
+
         string ksefNumber = $"TEST-COMMIT-{Guid.NewGuid():N}";
 
         await using var dbContext = new AppDbContext(options);
@@ -98,6 +107,7 @@ public sealed class InvoiceImportTransactionTests
 
         var invoice = new StoredInvoice
         {
+            TenantId = testTenant.TenantId,
             KsefNumber = ksefNumber,
             InvoiceNumber = "TEST/COMMIT/001",
             IssueDate = DateOnly.FromDateTime(DateTime.Today),
@@ -162,11 +172,14 @@ public sealed class InvoiceImportTransactionTests
             .UseSqlServer(connectionString)
             .Options;
 
+        await using var testTenant = await TestTenant.CreateAsync(options);
+
         string ksefNumberA = $"TEST-DUP-A-{Guid.NewGuid():N}";
         string ksefNumberB = $"TEST-DUP-B-{Guid.NewGuid():N}";
 
         StoredInvoice CreateInvoice(string ksefNumber) => new()
         {
+            TenantId = testTenant.TenantId,
             KsefNumber = ksefNumber,
             InvoiceNumber = "TEST/DUP/001",
             IssueDate = DateOnly.FromDateTime(DateTime.Today),
@@ -249,11 +262,14 @@ public sealed class InvoiceImportTransactionTests
             .UseSqlServer(connectionString)
             .Options;
 
+        await using var testTenant = await TestTenant.CreateAsync(options);
+
         string ksefNumberA = $"TEST-ROLLBACK-A-{Guid.NewGuid():N}";
         string ksefNumberB = $"TEST-ROLLBACK-B-{Guid.NewGuid():N}";
 
         StoredInvoice CreateInvoice(string number) => new()
         {
+            TenantId = testTenant.TenantId,
             KsefNumber = number,
             InvoiceNumber = "TEST/ROLLBACK/001",
             IssueDate = DateOnly.FromDateTime(DateTime.Today),
@@ -476,5 +492,160 @@ public sealed class InvoiceImportTransactionTests
 
         // Assert
         Assert.True(secondOperationExecuted);
+    }
+
+    [Theory]
+    [InlineData("PLN", false, false)]
+    [InlineData("PLN", false, true)]
+    [InlineData("EUR", false, false)]
+    [InlineData("EUR", false, true)]
+    [InlineData("USD", true, false)]
+    [InlineData("USD", true, true)]
+    public async Task DirectoryImportPersistsXmlAndOptionalSdkMetadata(string currency, bool correction, bool withSdkMetadata)
+    {
+        var options = CreateImportTestOptions();
+        await using var tenant = await TestTenant.CreateAsync(options);
+        string number = "TEST-METADATA-" + Guid.NewGuid().ToString("N");
+        string directory = Path.Combine(Path.GetTempPath(), "xksef-import-" + Guid.NewGuid().ToString("N"));
+        byte[] xml = InvoiceImportTestData.Xml(currency, correction);
+        decimal? vatAmountPln = withSdkMetadata ? (correction ? -99.12m : 99.12m) : null;
+        DateTimeOffset? invoicingDate = withSdkMetadata ? InvoiceImportTestData.InvoicingDate : null;
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await File.WriteAllBytesAsync(Path.Combine(directory, number + ".xml"), xml);
+            await File.WriteAllTextAsync(Path.Combine(directory, "_metadata.json"), InvoiceImportTestData.Metadata(number, xml, vatAmountPln, invoicingDate));
+            await using var context = new AppDbContext(options);
+            var importer = new InvoiceImportService(new InvoiceRepository(context), new KsefInvoiceMetadataParser());
+            var packageImporter = new InvoicePackageImportService(importer);
+            var transaction = new InvoiceImportTransaction(context);
+            InvoiceImportResult? result = null;
+            await transaction.ExecuteAsync(async ct => result = await packageImporter.ImportFromDirectoryAsync(tenant.TenantId, directory, InvoiceDirection.Purchase, ct));
+
+            Assert.Equal(1, result!.ImportedCount);
+            Assert.Equal(0, result.SkippedCount);
+            await using var verification = new AppDbContext(options);
+            var saved = await verification.Invoices.AsNoTracking().SingleAsync(x => x.TenantId == tenant.TenantId && x.KsefNumber == number);
+            InvoiceImportTestData.AssertValues(saved, xml, currency, correction, vatAmountPln, invoicingDate);
+            Assert.Equal(InvoiceDirection.Purchase, saved.Direction);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public async Task ImporterSkipsDuplicatesWithoutOverwritingAndIsolatesTheSameNumberAcrossTenants()
+    {
+        var options = CreateImportTestOptions();
+        await using var tenantA = await TestTenant.CreateAsync(options);
+        await using var tenantB = await TestTenant.CreateAsync(options);
+        string number = "TEST-METADATA-DUP-" + Guid.NewGuid().ToString("N");
+        byte[] originalXml = InvoiceImportTestData.Xml("EUR");
+        var original = new ValidatedInvoice(number, originalXml, 99.12m, InvoiceImportTestData.InvoicingDate);
+        byte[] otherXml = InvoiceImportTestData.Xml("USD", true);
+        var other = new ValidatedInvoice(number, otherXml, -200m, InvoiceImportTestData.InvoicingDate.AddDays(1));
+        await using var context = new AppDbContext(options);
+        var importer = new InvoiceImportService(new InvoiceRepository(context), new KsefInvoiceMetadataParser());
+        var transaction = new InvoiceImportTransaction(context);
+        await transaction.ExecuteAsync(async ct =>
+        {
+            await importer.ImportAsync(tenantA.TenantId, original, InvoiceDirection.Sales, ct);
+            var result = await importer.ImportManyAsync(tenantA.TenantId, [other], InvoiceDirection.Purchase, ct);
+            Assert.Equal(0, result.ImportedCount);
+            Assert.Equal(1, result.SkippedCount);
+            await importer.ImportAsync(tenantB.TenantId, other, InvoiceDirection.Purchase, ct);
+        });
+
+        await using var verification = new AppDbContext(options);
+        var repository = new InvoiceRepository(verification);
+        var first = await repository.GetByKsefNumberAsync(tenantA.TenantId, number);
+        var second = await repository.GetByKsefNumberAsync(tenantB.TenantId, number);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(tenantA.TenantId, first.TenantId);
+        Assert.Equal(tenantB.TenantId, second.TenantId);
+        Assert.Equal(InvoiceDirection.Sales, first.Direction);
+        Assert.Equal(InvoiceDirection.Purchase, second.Direction);
+        InvoiceImportTestData.AssertValues(first, originalXml, "EUR", false, 99.12m, InvoiceImportTestData.InvoicingDate);
+        InvoiceImportTestData.AssertValues(second, otherXml, "USD", true, -200m, InvoiceImportTestData.InvoicingDate.AddDays(1));
+        Assert.False(await repository.ExistsAsync(Guid.NewGuid(), number));
+        Assert.Null(await repository.GetByKsefNumberAsync(Guid.NewGuid(), number));
+    }
+
+    [Fact]
+    public async Task ImporterRollsBackNewMetadataWhenALaterXmlCannotBeParsed()
+    {
+        var options = CreateImportTestOptions();
+        await using var tenant = await TestTenant.CreateAsync(options);
+        string number = "TEST-METADATA-ROLLBACK-" + Guid.NewGuid().ToString("N");
+        var original = new ValidatedInvoice(number, InvoiceImportTestData.Xml(), 99.12m, InvoiceImportTestData.InvoicingDate);
+        var invalid = new ValidatedInvoice(number + "-INVALID", System.Text.Encoding.UTF8.GetBytes("<Faktura/>"));
+        await using var context = new AppDbContext(options);
+        var importer = new InvoiceImportService(new InvoiceRepository(context), new KsefInvoiceMetadataParser());
+        var transaction = new InvoiceImportTransaction(context);
+        await Assert.ThrowsAsync<FormatException>(() => transaction.ExecuteAsync(ct => importer.ImportManyAsync(tenant.TenantId, [original, invalid], InvoiceDirection.Sales, ct)));
+
+        await using var verification = new AppDbContext(options);
+        Assert.False(await verification.Invoices.AnyAsync(x => x.TenantId == tenant.TenantId));
+    }
+
+    private static DbContextOptions<AppDbContext> CreateImportTestOptions()
+    {
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.Test.json", optional: false)
+            .Build();
+        return new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlServer(configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Brak connection stringa DefaultConnection."))
+            .Options;
+    }
+
+    private sealed class TestTenant : IAsyncDisposable
+    {
+        private readonly DbContextOptions<AppDbContext> _options;
+        private readonly Guid _taxEntityId;
+
+        private TestTenant(DbContextOptions<AppDbContext> options, Tenant tenant)
+        {
+            _options = options;
+            TenantId = tenant.Id;
+            _taxEntityId = tenant.TaxEntityId;
+        }
+
+        public Guid TenantId { get; }
+
+        public static async Task<TestTenant> CreateAsync(DbContextOptions<AppDbContext> options)
+        {
+            var taxEntity = new TaxEntity
+            {
+                Id = Guid.NewGuid(),
+                Nip = Random.Shared.NextInt64(1_000_000_000L, 10_000_000_000L).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Name = "InvoiceImportTransactionTests"
+            };
+            var tenant = new Tenant
+            {
+                Id = Guid.NewGuid(),
+                Name = "InvoiceImportTransactionTests",
+                TaxEntityId = taxEntity.Id,
+                TaxEntity = taxEntity
+            };
+
+            // Persist the fixture before the transaction under test starts.
+            await using var dbContext = new AppDbContext(options);
+            dbContext.Tenants.Add(tenant);
+            await dbContext.SaveChangesAsync();
+
+            return new TestTenant(options, tenant);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            // Use a fresh context, also when the test failed or rolled back.
+            await using var dbContext = new AppDbContext(_options);
+            await using var transaction = await dbContext.Database.BeginTransactionAsync();
+            await dbContext.Invoices.Where(x => x.TenantId == TenantId).ExecuteDeleteAsync();
+            await dbContext.Tenants.Where(x => x.Id == TenantId).ExecuteDeleteAsync();
+            await dbContext.TaxEntities.Where(x => x.Id == _taxEntityId).ExecuteDeleteAsync();
+            await transaction.CommitAsync();
+        }
     }
 }

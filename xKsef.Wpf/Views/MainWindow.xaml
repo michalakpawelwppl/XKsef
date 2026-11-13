@@ -3,13 +3,49 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:pdf="clr-namespace:PdfiumViewer;assembly=PdfiumViewer"
         xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
+        xmlns:converters="clr-namespace:xKsef.Wpf.Converters"
+        xmlns:contracts="clr-namespace:xKsef.Contracts.Invoices;assembly=xKsef.Contracts"
         Title="xKsef - Przeglądarka faktur"
         Height="600"
-        Width="1100">
+        Width="1100" MinWidth="660">
+    <Window.Resources>
+        <converters:LocalDateTimeOffsetConverter x:Key="LocalDateTimeOffsetConverter"/>
+        <Style x:Key="InvoiceAmountStyle" TargetType="TextBlock">
+            <Setter Property="TextAlignment" Value="Right"/>
+        </Style>
+        <Style x:Key="InvoiceTrimmedTextStyle" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+        </Style>
+        <DataTemplate x:Key="InvoiceSummaryRowTemplate">
+            <Grid Margin="0,2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="65"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Currency}"/>
+                <TextBlock Grid.Column="1" Text="{Binding NetTotal, StringFormat=N2, ConverterCulture=pl-PL, TargetNullValue='Brak danych'}" Style="{StaticResource InvoiceAmountStyle}" Margin="4,0">
+                    <TextBlock.ToolTip>
+                        <ToolTip DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                            <TextBlock Text="{Binding MissingNetCount, StringFormat='Brakujące wartości netto: {0}'}"/>
+                        </ToolTip>
+                    </TextBlock.ToolTip>
+                </TextBlock>
+                <TextBlock Grid.Column="2" Text="{Binding VatTotal, StringFormat=N2, ConverterCulture=pl-PL, TargetNullValue='Brak danych'}" Style="{StaticResource InvoiceAmountStyle}" Margin="4,0">
+                    <TextBlock.ToolTip>
+                        <ToolTip DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                            <TextBlock Text="{Binding MissingVatCount, StringFormat='Brakujące wartości VAT: {0}'}"/>
+                        </ToolTip>
+                    </TextBlock.ToolTip>
+                </TextBlock>
+                <TextBlock Grid.Column="3" Text="{Binding GrossTotal, StringFormat=N2, ConverterCulture=pl-PL}" Style="{StaticResource InvoiceAmountStyle}" Margin="4,0"/>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
     <i:Interaction.Triggers>
-        <i:EventTrigger EventName="Loaded">
-            <i:InvokeCommandAction Command="{Binding LoadInvoicesCommand}" />
-        </i:EventTrigger>
+
         <i:EventTrigger EventName="Closed">
             <i:InvokeCommandAction Command="{Binding CleanupOnCloseCommand}" />
         </i:EventTrigger>
@@ -24,51 +60,67 @@
         </Grid.RowDefinitions>
 
         <!-- GÓRNY PASEK -->
-        <Grid Grid.Row="0"
-              Background="#F0F0F0">
+        <Grid Grid.Row="0" Background="#F0F0F0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-            <TextBlock Text="xKsef"
-                       FontSize="18"
-                       FontWeight="SemiBold"
-                       VerticalAlignment="Center"
-                       Margin="15,0,0,0"/>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="xKsef" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="15,0,20,0"/>
 
-            <Button Content="Zaloguj" Width="100"
-Height="30"
-HorizontalAlignment="Right"
-VerticalAlignment="Center"
-Margin="5,0"
-        Command="{Binding LoginCommand}">
-                <Button.Style>
-                    <Style TargetType="Button">
-                        <Setter Property="Visibility" Value="Visible"/>
+                <Menu Background="Transparent" VerticalAlignment="Center">
+                    <MenuItem Header="Nowy tenant" Command="{Binding NewTenantCommand}" IsEnabled="{Binding IsLoggedIn}" Padding="12,8"/>
+                    <MenuItem Header="Nowy użytkownik" Command="{Binding NewUserCommand}" IsEnabled="{Binding IsLoggedIn}" Padding="12,8"/>
+                    <MenuItem Header="KSeF" IsEnabled="{Binding IsLoggedIn}" Padding="12,8">
+                        <MenuItem Header="Konfiguruj token KSeF" Command="{Binding ConfigureKsefTokenCommand}"/>
+                        <MenuItem Header="Konfiguruj certyfikat KSeF" Command="{Binding ConfigureKsefCertificateCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Uwierzytelnij tokenem" Command="{Binding AuthenticateKsefTokenCommand}" IsEnabled="{Binding HasKsefToken}"/>
+                        <MenuItem Header="Uwierzytelnij certyfikatem" Command="{Binding AuthenticateKsefCertificateCommand}" IsEnabled="{Binding HasKsefCertificate}"/>
+                        <Separator/>
+                        <MenuItem Header="Preferowane poświadczenie">
+                            <MenuItem StaysOpenOnClick="True">
+                                <MenuItem.Header>
+                                    <ComboBox Width="220" ItemsSource="{Binding AvailableKsefCredentials}" SelectedItem="{Binding SelectedKsefCredential, Mode=TwoWay}" DisplayMemberPath="Name"/>
+                                </MenuItem.Header>
+                            </MenuItem>
+                            <MenuItem Header="Zapisz wybór" Command="{Binding SavePreferredKsefCredentialCommand}"/>
+                        </MenuItem>
+                    </MenuItem>
+                </Menu>
+            </StackPanel>
 
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsLoggedIn}" Value="True">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
-            <Button Content="Wyloguj" Width="100"
-Height="30"
-HorizontalAlignment="Right"
-VerticalAlignment="Center"
-Margin="5,0"
-        Command="{Binding LogoutCommand}">
-                <Button.Style>
-                    <Style TargetType="Button">
-                        <Setter Property="Visibility" Value="Collapsed"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                <TextBlock Text="Podmiot:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Width="250" Height="30" ItemsSource="{Binding AvailableTenants}" SelectedItem="{Binding SelectedTenant, Mode=TwoWay}" DisplayMemberPath="Name" IsEnabled="{Binding IsLoggedIn}" VerticalContentAlignment="Center" Margin="0,0,10,0"/>
 
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsLoggedIn}" Value="True">
-                                <Setter Property="Visibility" Value="Visible"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
+                <Button Content="Zaloguj" Width="100" Height="30" Margin="5,0" Command="{Binding LoginCommand}">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLoggedIn}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+
+                <Button Content="Wyloguj" Width="100" Height="30" Margin="5,0" Command="{Binding LogoutCommand}">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLoggedIn}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+            </StackPanel>
         </Grid>
 
         <!-- GŁÓWNA ZAWARTOŚĆ -->
@@ -82,7 +134,7 @@ Margin="5,0"
                            FontWeight="Bold"
                            Margin="0,0,0,15"/>
 
-                <StackPanel Orientation="Horizontal"
+                <WrapPanel Orientation="Horizontal"
                             Margin="0,0,0,15">
 
                     <TextBlock Text="Od:"
@@ -97,60 +149,176 @@ Margin="5,0"
                     <DatePicker SelectedDate="{Binding DateTo}"
                                 Margin="8,0,20,0"/>
 
+                    <TextBlock Text="Data filtra listy:" VerticalAlignment="Center"/>
+                    <ComboBox SelectedValue="{Binding SelectedInvoiceDateKind, Mode=TwoWay}" SelectedValuePath="Tag" Width="205" Margin="8,0,16,0" VerticalAlignment="Center">
+                        <ComboBoxItem Content="Data wystawienia" Tag="{x:Static contracts:InvoiceDateKind.IssueDate}"/>
+                        <ComboBoxItem Content="Data przyjęcia do KSeF" Tag="{x:Static contracts:InvoiceDateKind.InvoicingDate}"/>
+                    </ComboBox>
+
                     <Button Content="Pobierz faktury"
                             Command="{Binding LoadInvoicesCommand}"
                             Padding="15,6"/>
-                    <Button Content="Importuj z KSeF"
+                    <Button Content="Importuj z KSeF" ToolTip="Import z KSeF korzysta z zakresu dat wystawienia. Rodzaj daty filtra dotyczy lokalnej listy."
         Command="{Binding ImportFromKsefCommand}"
         Padding="15,6"
         Margin="10,0,0,0"
         IsEnabled="{Binding IsLoggedIn}"/>
-                </StackPanel>
+                </WrapPanel>
             </StackPanel>
 
             <!-- Pasek statusu -->
             <TextBlock DockPanel.Dock="Bottom"
                        Text="{Binding Status}"
                        Margin="0,10,0,0"/>
-
+            <TextBlock DockPanel.Dock="Bottom" Text="{Binding KsefTokenStatus}" Margin="10,5,10,5" VerticalAlignment="Center" />
             <!-- Zakładki faktur -->
             <!-- Lista faktur i podgląd PDF -->
             <Grid>
                 <Grid.ColumnDefinitions>
                     <!-- Lista faktur -->
-                    <ColumnDefinition Width="403*" MinWidth="300"/>
-                    <ColumnDefinition Width="132*"/>
+                    <ColumnDefinition Width="3*" MinWidth="300"/>
+                    <ColumnDefinition Width="6"/>
 
                     <!-- Podgląd PDF -->
-                    <ColumnDefinition Width="535*" MinWidth="300"/>
+                    <ColumnDefinition Width="2*" MinWidth="300"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- LEWA STRONA: lista faktur -->
                 <TabControl Grid.Column="0"
                 SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}"
-                Margin="0,0,5,0" Grid.ColumnSpan="2">
+                Margin="0">
 
                     <TabItem Header="Sprzedaż">
-                        <DataGrid ItemsSource="{Binding SalesInvoices}"
-                      SelectedItem="{Binding SelectedSalesInvoice, Mode=TwoWay}"
-                      AutoGenerateColumns="True"
-                      IsReadOnly="True"/>
+                                                <DockPanel>
+                            <Border DockPanel.Dock="Bottom" BorderBrush="#CCCCCC" BorderThickness="0,1,0,0" Margin="0,6,0,0" Padding="0,6,0,0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasSalesQueryResult}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="65"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Waluta" FontWeight="SemiBold"/>
+                                        <TextBlock Grid.Column="1" Text="Netto" FontWeight="SemiBold" TextAlignment="Right" Margin="4,0"/>
+                                        <TextBlock Grid.Column="2" Text="VAT" FontWeight="SemiBold" TextAlignment="Right" Margin="4,0"/>
+                                        <TextBlock Grid.Column="3" Text="Brutto" FontWeight="SemiBold" TextAlignment="Right" Margin="4,0"/>
+                                    </Grid>
+                                    <ScrollViewer MaxHeight="100" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding SalesSummaries}" ItemTemplate="{StaticResource InvoiceSummaryRowTemplate}"/>
+                                    </ScrollViewer>
+                                    <TextBlock Text="Brak faktur" Margin="0,3">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding SalesInvoices.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+<DataGrid ItemsSource="{Binding SalesInvoices}" CurrentItem="{Binding SelectedSalesInvoice, Mode=TwoWay}" SelectionUnit="Cell" SelectionMode="Extended" ClipboardCopyMode="ExcludeHeader"
+                                  AutoGenerateColumns="False" IsReadOnly="True" Language="pl-PL"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Numer faktury" Binding="{Binding InvoiceNumber}" Width="SizeToCells" MinWidth="130"/>
+                                <DataGridTextColumn Header="Numer KSeF" Binding="{Binding KsefNumber}" ElementStyle="{StaticResource InvoiceTrimmedTextStyle}" Width="110" MinWidth="80"/>
+                                <DataGridTextColumn Header="NIP nabywcy" Binding="{Binding BuyerNip}" Width="SizeToCells" MinWidth="110"/>
+                                <DataGridTextColumn Header="Nazwa nabywcy" Binding="{Binding BuyerName}" ElementStyle="{StaticResource InvoiceTrimmedTextStyle}" Width="140" MinWidth="100"/>
+                                <DataGridTextColumn Header="Data wystawienia" Binding="{Binding IssueDate, StringFormat=yyyy-MM-dd}" Width="SizeToCells" MinWidth="115"/>
+                                <DataGridTextColumn Header="Data przyjęcia do KSeF" Binding="{Binding InvoicingDate, Mode=OneWay, Converter={StaticResource LocalDateTimeOffsetConverter}}" Width="SizeToCells" MinWidth="155"/>
+                                <DataGridTextColumn Header="Waluta" Binding="{Binding Currency}" Width="SizeToCells" MinWidth="65"/>
+                                <DataGridTextColumn Header="Netto" Binding="{Binding NetAmount, StringFormat=N2, ConverterCulture=pl-PL, TargetNullValue=''}" ElementStyle="{StaticResource InvoiceAmountStyle}" Width="SizeToCells" MinWidth="95"/>
+                                <DataGridTextColumn Header="VAT" Binding="{Binding VatAmount, StringFormat=N2, ConverterCulture=pl-PL, TargetNullValue=''}" ElementStyle="{StaticResource InvoiceAmountStyle}" Width="SizeToCells" MinWidth="95"/>
+                                <DataGridTextColumn Header="Brutto" Binding="{Binding GrossAmount, StringFormat=N2, ConverterCulture=pl-PL}" ElementStyle="{StaticResource InvoiceAmountStyle}" Width="SizeToCells" MinWidth="95"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        </DockPanel>
                     </TabItem>
 
                     <TabItem Header="Zakup">
-                        <DataGrid ItemsSource="{Binding PurchaseInvoices}"
-                      SelectedItem="{Binding SelectedPurchaseInvoice, Mode=TwoWay}"
-                      AutoGenerateColumns="True"
-                      IsReadOnly="True"/>
+                                                <DockPanel>
+                            <Border DockPanel.Dock="Bottom" BorderBrush="#CCCCCC" BorderThickness="0,1,0,0" Margin="0,6,0,0" Padding="0,6,0,0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasPurchaseQueryResult}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="65"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Waluta" FontWeight="SemiBold"/>
+                                        <TextBlock Grid.Column="1" Text="Netto" FontWeight="SemiBold" TextAlignment="Right" Margin="4,0"/>
+                                        <TextBlock Grid.Column="2" Text="VAT" FontWeight="SemiBold" TextAlignment="Right" Margin="4,0"/>
+                                        <TextBlock Grid.Column="3" Text="Brutto" FontWeight="SemiBold" TextAlignment="Right" Margin="4,0"/>
+                                    </Grid>
+                                    <ScrollViewer MaxHeight="100" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding PurchaseSummaries}" ItemTemplate="{StaticResource InvoiceSummaryRowTemplate}"/>
+                                    </ScrollViewer>
+                                    <TextBlock Text="Brak faktur" Margin="0,3">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding PurchaseInvoices.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+<DataGrid ItemsSource="{Binding PurchaseInvoices}" CurrentItem="{Binding SelectedPurchaseInvoice, Mode=TwoWay}" SelectionUnit="Cell" SelectionMode="Extended" ClipboardCopyMode="ExcludeHeader"
+                                  AutoGenerateColumns="False" IsReadOnly="True" Language="pl-PL"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Numer faktury" Binding="{Binding InvoiceNumber}" Width="SizeToCells" MinWidth="130"/>
+                                <DataGridTextColumn Header="Numer KSeF" Binding="{Binding KsefNumber}" ElementStyle="{StaticResource InvoiceTrimmedTextStyle}" Width="110" MinWidth="80"/>
+                                <DataGridTextColumn Header="NIP sprzedawcy" Binding="{Binding SellerNip}" Width="SizeToCells" MinWidth="110"/>
+                                <DataGridTextColumn Header="Nazwa sprzedawcy" Binding="{Binding SellerName}" ElementStyle="{StaticResource InvoiceTrimmedTextStyle}" Width="140" MinWidth="100"/>
+                                <DataGridTextColumn Header="Data wystawienia" Binding="{Binding IssueDate, StringFormat=yyyy-MM-dd}" Width="SizeToCells" MinWidth="115"/>
+                                <DataGridTextColumn Header="Data przyjęcia do KSeF" Binding="{Binding InvoicingDate, Mode=OneWay, Converter={StaticResource LocalDateTimeOffsetConverter}}" Width="SizeToCells" MinWidth="155"/>
+                                <DataGridTextColumn Header="Waluta" Binding="{Binding Currency}" Width="SizeToCells" MinWidth="65"/>
+                                <DataGridTextColumn Header="Netto" Binding="{Binding NetAmount, StringFormat=N2, ConverterCulture=pl-PL, TargetNullValue=''}" ElementStyle="{StaticResource InvoiceAmountStyle}" Width="SizeToCells" MinWidth="95"/>
+                                <DataGridTextColumn Header="VAT" Binding="{Binding VatAmount, StringFormat=N2, ConverterCulture=pl-PL, TargetNullValue=''}" ElementStyle="{StaticResource InvoiceAmountStyle}" Width="SizeToCells" MinWidth="95"/>
+                                <DataGridTextColumn Header="Brutto" Binding="{Binding GrossAmount, StringFormat=N2, ConverterCulture=pl-PL}" ElementStyle="{StaticResource InvoiceAmountStyle}" Width="SizeToCells" MinWidth="95"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        </DockPanel>
                     </TabItem>
 
                 </TabControl>
+
+                <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" Background="#D0D0D0" Cursor="SizeWE"/>
 
                 <!-- PRAWA STRONA: przyszły podgląd PDF -->
                 <Border Grid.Column="2"
             BorderBrush="#CCCCCC"
             BorderThickness="1"
-            Margin="5,0,0,0">
+            Margin="0">
 
                     <pdf:PDFViewer
     x:Name="InvoicePdfViewer"

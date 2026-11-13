@@ -1,9 +1,9 @@
-﻿using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Windows;
 using xKsef.Wpf.Authentication;
 using xKsef.Wpf.Services;
+using xKsef.Wpf.Services.Certificates;
 using xKsef.Wpf.ViewModels;
 using xKsef.Wpf.Views;
 
@@ -19,32 +19,53 @@ public partial class App : System.Windows.Application
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices((context, services) =>
             {
-                var apiBaseUrl = context.Configuration["Api:BaseUrl"]
-                    ?? throw new InvalidOperationException(
-                        "Brak konfiguracji Api:BaseUrl.");
+                var apiBaseUrl = context.Configuration["Api:BaseUrl"] ?? throw new InvalidOperationException("Brak konfiguracji Api:BaseUrl.");
+                services.AddHttpClient<IInvoiceApiClient, InvoiceApiClient>(client =>
+                {
+                    client.BaseAddress = new Uri(apiBaseUrl);
+                    client.Timeout = TimeSpan.FromMinutes(15);
+                })
+                .AddHttpMessageHandler<BearerTokenHandler>()
+                .AddHttpMessageHandler<TenantHeaderHandler>();
 
-                services.AddHttpClient<IInvoiceApiClient, InvoiceApiClient>(
-                    client =>
-                    {
-                        client.BaseAddress = new Uri(apiBaseUrl);
-                        client.Timeout = TimeSpan.FromMinutes(15);
-                    })
-                    .AddHttpMessageHandler<BearerTokenHandler>();
+                services.AddHttpClient<ITenantApiClient, TenantApiClient>(client =>
+                {
+                    client.BaseAddress = new Uri(apiBaseUrl);
+                })
+                .AddHttpMessageHandler<BearerTokenHandler>();
 
-                services.AddHttpClient<IAuthenticationApiClient, AuthenticationApiClient>(
-                    client =>
-                    {
-                        client.BaseAddress = new Uri(apiBaseUrl);
-                    });
+                services.AddHttpClient<IAuthenticationApiClient, AuthenticationApiClient>(client =>
+                {
+                    client.BaseAddress = new Uri(apiBaseUrl);
+                })
+                .AddHttpMessageHandler<BearerTokenHandler>()
+                .AddHttpMessageHandler<TenantHeaderHandler>();
 
+                services.AddHttpClient<IKsefCredentialsApiClient, KsefCredentialsApiClient>(client =>
+                {
+                    client.BaseAddress = new Uri(apiBaseUrl);
+                })
+                .AddHttpMessageHandler<BearerTokenHandler>()
+                .AddHttpMessageHandler<TenantHeaderHandler>();
 
                 services.AddTransient<MainViewModel>();
                 services.AddTransient<MainWindow>();
+                services.AddTransient<NewTenantViewModel>();
+                services.AddTransient<NewTenantWindow>();
+                services.AddTransient<NewUserViewModel>();
+                services.AddTransient<NewUserWindow>();
                 services.AddTransient<LoginViewModel>();
                 services.AddTransient<LoginWindow>();
                 services.AddSingleton<ITokenStore, TokenStore>();
                 services.AddTransient<BearerTokenHandler>();
+                services.AddTransient<TenantHeaderHandler>();
+                services.AddSingleton<TenantContext>();
                 services.AddSingleton<IWindowNavigationService, WindowNavigationService>();
+                services.AddTransient<CertificateSelectionViewModel>();
+                services.AddTransient<CertificateSelectionWindow>();
+                services.AddSingleton<ICertificateSelectionWindowService, CertificateSelectionWindowService>();
+                services.AddSingleton<IKsefTokenWindowService, KsefTokenWindowService>();
+
             })
             .Build();
     }
@@ -52,14 +73,9 @@ public partial class App : System.Windows.Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-
         ShutdownMode = ShutdownMode.OnMainWindowClose;
-
         await _host.StartAsync();
-
-        var window = _host.Services
-            .GetRequiredService<MainWindow>();
-
+        var window = _host.Services.GetRequiredService<MainWindow>();
         MainWindow = window;
         window.Show();
     }
@@ -68,7 +84,6 @@ public partial class App : System.Windows.Application
     {
         await _host.StopAsync();
         _host.Dispose();
-
         base.OnExit(e);
     }
 }

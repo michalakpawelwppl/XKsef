@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using xKsef.Api.Contracts.Authentication;
 using xKsef.Application.Authentication;
+using xKsef.Contracts.Authentication;
 
 namespace xKsef.Api.Controllers;
 
@@ -13,9 +14,7 @@ public sealed class AuthController : ControllerBase
     private readonly IUserAuthenticationService _authenticationService;
     private readonly IJwtTokenService _jwtTokenService;
 
-    public AuthController(
-        IUserAuthenticationService authenticationService,
-        IJwtTokenService jwtTokenService)
+    public AuthController(IUserAuthenticationService authenticationService,IJwtTokenService jwtTokenService)
     {
         _authenticationService = authenticationService;
         _jwtTokenService = jwtTokenService;

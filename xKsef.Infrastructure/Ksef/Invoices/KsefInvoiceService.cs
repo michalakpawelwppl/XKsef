@@ -1,4 +1,5 @@
-﻿using KSeF.Client.Core.Exceptions;
+﻿using InvoiceDirection = xKsef.Domain.Invoices.InvoiceDirection;
+using KSeF.Client.Core.Exceptions;
 using KSeF.Client.Core.Interfaces.Clients;
 using KSeF.Client.Core.Interfaces.Services;
 using KSeF.Client.Core.Models.Invoices;
@@ -8,6 +9,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using xKsef.Application.Exceptions;
 using xKsef.Application.Invoices;
+using xKsef.Contracts.Invoices;
 using xKsef.Domain.Invoices;
 using xKsef.Infrastructure.Invoices;
 using xKsef.Infrastructure.Ksef.Authentication;
@@ -40,12 +42,12 @@ public sealed class KsefInvoiceService : IInvoiceService
         _invoiceRepository = invoiceRepository;
     }
 
-    public async Task<string> GetInvoiceXmlAsync(string ksefNumber, CancellationToken cancellationToken = default)
+    public async Task<string> GetInvoiceXmlAsync(string userId, Guid tenantId, string ksefNumber, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(ksefNumber))
             throw new ArgumentException( "Numer KSeF nie może być pusty.", nameof(ksefNumber));
 
-        var accessToken = await _tokenProvider.GetAccessTokenAsync(cancellationToken);
+        var accessToken = await _tokenProvider.GetAccessTokenAsync(userId, tenantId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(accessToken))
             throw new InvalidOperationException("Nie udało się uzyskać tokena KSeF.");
@@ -53,18 +55,21 @@ public sealed class KsefInvoiceService : IInvoiceService
         return await ExecuteKsefRequestAsync(() => _ksefClient.GetInvoiceAsync(ksefNumber, accessToken, cancellationToken));
     }
 
-    public async Task<InvoicePackageReadResult> ImportInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
+    public async Task<InvoicePackageReadResult> ImportInvoicesAsync(string userId, Guid tenantId, DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
     {
+        if (tenantId == Guid.Empty)
+            throw new ArgumentException("TenantId nie może być pusty.", nameof(tenantId));
+
         List<string>? decryptedFiles = null;
         string? archivePath = null;
 
         try
         {
             // 1. Rozpoczęcie eksportu z KSeF
-            var session = await StartInvoiceImportAsync(from, to, direction, cancellationToken);
+            var session = await StartInvoiceImportAsync(userId, tenantId, from, to, direction, cancellationToken);
 
             // 2. Oczekiwanie na zakończenie eksportu
-            var status = await WaitForInvoiceImportAsync(session, cancellationToken);
+            var status = await WaitForInvoiceImportAsync(userId, tenantId, session, cancellationToken);
 
             // 3. Pobranie i odszyfrowanie części paczki
             decryptedFiles = await DownloadAndDecryptPackageAsync(status, session, cancellationToken);
@@ -95,7 +100,7 @@ public sealed class KsefInvoiceService : IInvoiceService
                         {
                             try
                             {
-                                await _invoiceImportService.ImportAsync(invoice, direction, invoiceCt);
+                                await _invoiceImportService.ImportAsync(tenantId, invoice, direction, invoiceCt);
                                 importedCount++;
                             }
                             catch (DuplicateInvoiceException)
@@ -171,11 +176,11 @@ public sealed class KsefInvoiceService : IInvoiceService
         }
     }
 
-    internal async Task<InvoiceExportStatusResponse> GetInvoiceImportStatusAsync(InvoiceImportSession session,CancellationToken cancellationToken = default)
+    internal async Task<InvoiceExportStatusResponse> GetInvoiceImportStatusAsync(string userId, Guid tenantId, InvoiceImportSession session, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        var accessToken = await _tokenProvider.GetAccessTokenAsync(cancellationToken);
+        var accessToken = await _tokenProvider.GetAccessTokenAsync(userId, tenantId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(accessToken))
             throw new InvalidOperationException("Nie udało się uzyskać tokena KSeF.");
@@ -238,11 +243,7 @@ public sealed class KsefInvoiceService : IInvoiceService
             throw;
         }
     }
-    private async Task<string> DecryptInvoicePackagePartAsync(
-    string encryptedFilePath,
-    InvoiceExportPackagePart part,
-    InvoiceImportSession session,
-    CancellationToken cancellationToken = default)
+    private async Task<string> DecryptInvoicePackagePartAsync(string encryptedFilePath, InvoiceExportPackagePart part, InvoiceImportSession session, CancellationToken cancellationToken = default)
     {
         var decryptedFilePath = Path.Combine(
             Path.GetTempPath(),
@@ -371,18 +372,14 @@ public sealed class KsefInvoiceService : IInvoiceService
         }
     }
 
-    private async Task<InvoiceExportStatusResponse> WaitForInvoiceImportAsync(
-    InvoiceImportSession session,
-    CancellationToken cancellationToken = default)
+    private async Task<InvoiceExportStatusResponse> WaitForInvoiceImportAsync(string userId, Guid tenantId, InvoiceImportSession session, CancellationToken cancellationToken = default)
     {
         const int maxAttempts = 30;
         var delay = TimeSpan.FromSeconds(10);
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var response = await GetInvoiceImportStatusAsync(
-                session,
-                cancellationToken);
+            var response = await GetInvoiceImportStatusAsync(userId, tenantId, session, cancellationToken);
 
             var status = response.Status
                 ?? throw new InvalidOperationException(
@@ -412,22 +409,15 @@ public sealed class KsefInvoiceService : IInvoiceService
             "Przekroczono czas oczekiwania na przygotowanie paczki KSeF.");
     }
 
-    internal async Task<InvoiceImportSession> StartInvoiceImportAsync(
-        DateOnly from,
-    DateOnly to,
-    InvoiceDirection direction,
-    CancellationToken cancellationToken = default)
+    internal async Task<InvoiceImportSession> StartInvoiceImportAsync(string userId, Guid tenantId, DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
     {
         if (from > to)
-            throw new ArgumentException(
-                "Data początkowa nie może być późniejsza od końcowej.");
+            throw new ArgumentException("Data początkowa nie może być późniejsza od końcowej.");
 
-        var accessToken = await _tokenProvider
-            .GetAccessTokenAsync(cancellationToken);
+        var accessToken = await _tokenProvider.GetAccessTokenAsync(userId, tenantId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(accessToken))
-            throw new InvalidOperationException(
-                "Nie udało się uzyskać tokena KSeF.");
+            throw new InvalidOperationException("Nie udało się uzyskać tokena KSeF.");
 
         var filters = new InvoiceQueryFilters
         {
@@ -469,13 +459,13 @@ public sealed class KsefInvoiceService : IInvoiceService
         };
     }
 
-    public async Task<int> GetInvoiceCountAsync(DateOnly from, DateOnly to, CancellationToken cancellationToken = default)
+    public async Task<int> GetInvoiceCountAsync(string userId, Guid tenantId, DateOnly from, DateOnly to, CancellationToken cancellationToken = default)
     {
         if (from > to)
             throw new ArgumentException(
                 "Data początkowa nie może być późniejsza od końcowej.");
 
-        var accessToken = await _tokenProvider.GetAccessTokenAsync(cancellationToken);
+        var accessToken = await _tokenProvider.GetAccessTokenAsync(userId, tenantId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(accessToken))
             throw new InvalidOperationException("Nie udało się uzyskać tokena KSeF.");
@@ -520,26 +510,21 @@ public sealed class KsefInvoiceService : IInvoiceService
         }
     }
 
-    public async Task<IReadOnlyList<InvoiceSummary>> GetInvoicesMetadataAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<InvoiceSummary>> GetInvoicesMetadataAsync(string userId, Guid tenantId, DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
     {
         if (from > to)
-            throw new ArgumentException(
-                "Data początkowa nie może być późniejsza od końcowej.");
+            throw new ArgumentException("Data początkowa nie może być późniejsza od końcowej.");
         var remainingDelay = _rateLimitState.GetRemainingDelay();
 
         if (remainingDelay.HasValue)
         {
-            throw new ExternalServiceRateLimitException(
-                "Limit żądań KSeF nadal obowiązuje.",
-                retryAfter: remainingDelay.Value);
+            throw new ExternalServiceRateLimitException("Limit żądań KSeF nadal obowiązuje.", retryAfter: remainingDelay.Value);
         }
 
-        var accessToken = await _tokenProvider
-            .GetAccessTokenAsync(cancellationToken);
+        var accessToken = await _tokenProvider.GetAccessTokenAsync(userId, tenantId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(accessToken))
-            throw new InvalidOperationException(
-                "Nie udało się uzyskać tokena KSeF.");
+            throw new InvalidOperationException("Nie udało się uzyskać tokena KSeF.");
 
         var filters = new InvoiceQueryFilters
         {
@@ -551,10 +536,8 @@ public sealed class KsefInvoiceService : IInvoiceService
             },
             DateRange = new DateRange
             {
-                From = from.ToDateTime(
-                    TimeOnly.MinValue, DateTimeKind.Utc),
-                To = to.ToDateTime(
-                    TimeOnly.MaxValue, DateTimeKind.Utc),
+                From = from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+                To = to.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
                 DateType = DateType.Issue
             }
         };
@@ -592,12 +575,15 @@ public sealed class KsefInvoiceService : IInvoiceService
         return invoices;
     }
 
-    public async Task<IReadOnlyList<Invoice>> GetInvoicesAsync(DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<Invoice>> GetInvoicesAsync(Guid tenantId, DateOnly from, DateOnly to, InvoiceDirection direction, CancellationToken cancellationToken = default)
     {
+        if (tenantId == Guid.Empty)
+            throw new ArgumentException("TenantId nie może być pusty.", nameof(tenantId));
+
         if (from > to)
             throw new ArgumentException("Niepoprawny zakres dat.");
 
-        var storedInvoices = await _invoiceRepository.GetInvoicesAsync(from, to, direction, cancellationToken);
+        var storedInvoices = await _invoiceRepository.GetInvoicesAsync(tenantId, from, to, direction, cancellationToken);
 
         return storedInvoices.Select(invoice => new Invoice
         {
@@ -605,6 +591,12 @@ public sealed class KsefInvoiceService : IInvoiceService
             InvoiceNumber = invoice.InvoiceNumber,
             IssueDate = invoice.IssueDate,
             GrossAmount = invoice.GrossAmount,
+            BuyerNip = invoice.BuyerNip,
+            BuyerName = invoice.BuyerName,
+            NetAmount = invoice.NetAmount,
+            VatAmount = invoice.VatAmount,
+            VatAmountPln = invoice.VatAmountPln,
+            InvoicingDate = invoice.InvoicingDate,
             Currency = invoice.Currency,
             SellerName = invoice.SellerName,
             SellerNip = invoice.SellerNip
@@ -622,8 +614,7 @@ public sealed class KsefInvoiceService : IInvoiceService
                 cancellationToken: cancellationToken));
     }
 
-    private async Task<T> ExecuteKsefRequestAsync<T>(
-    Func<Task<T>> operation)
+    private async Task<T> ExecuteKsefRequestAsync<T>(Func<Task<T>> operation)
     {
         var remaining = _rateLimitState.GetRemainingDelay();
 
@@ -665,10 +656,7 @@ public sealed class KsefInvoiceService : IInvoiceService
         }
     }
 
-    private static async Task<IReadOnlyList<ExportedInvoiceMetadata>>
-        ReadPackageMetadataAsync(
-            string archivePath,
-            CancellationToken cancellationToken = default)
+    private static async Task<IReadOnlyList<ExportedInvoiceMetadata>> ReadPackageMetadataAsync( string archivePath, CancellationToken cancellationToken = default)
     {
         await using var file = File.OpenRead(archivePath);
 
@@ -724,33 +712,23 @@ public sealed class KsefInvoiceService : IInvoiceService
     "Archiwum KSeF nie zawiera pliku _metadata.json.");
     }
 
-    private async Task<int> ProcessInvoiceXmlsFromArchiveAsync(
-      string archivePath,
-      Func<ValidatedInvoice, CancellationToken, Task> processInvoiceAsync,
-      CancellationToken cancellationToken = default)
+    private async Task<int> ProcessInvoiceXmlsFromArchiveAsync(string archivePath, Func<ValidatedInvoice, CancellationToken, Task> processInvoiceAsync, CancellationToken cancellationToken = default)
     {
         var invoiceCount = 0;
-        var processedFiles = new HashSet<string>(
-    StringComparer.OrdinalIgnoreCase);
+        var processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var invoices = await ReadPackageMetadataAsync(
-        archivePath,
-        cancellationToken);
-        var metadataFileNames = new HashSet<string>(
-    StringComparer.OrdinalIgnoreCase);
-        var metadataKsefNumbers = new HashSet<string>(
-    StringComparer.Ordinal);
+        var invoices = await ReadPackageMetadataAsync(archivePath, cancellationToken);
+        var metadataFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var metadataKsefNumbers = new HashSet<string>(StringComparer.Ordinal);
         foreach (var invoice in invoices)
         {
             if (string.IsNullOrWhiteSpace(invoice.KsefNumber))
             {
-                throw new InvalidDataException(
-                    $"Brak numeru KSeF dla pliku: {invoice.FileName}");
+                throw new InvalidDataException($"Brak numeru KSeF dla pliku: {invoice.FileName}");
             }
             if (string.IsNullOrWhiteSpace(invoice.InvoiceHash))
             {
-                throw new InvalidDataException(
-                    $"Brak hash SHA-256 dla faktury KSeF: {invoice.KsefNumber}");
+                throw new InvalidDataException($"Brak hash SHA-256 dla faktury KSeF: {invoice.KsefNumber}");
             }
 
             byte[] hashBytes;
@@ -761,126 +739,86 @@ public sealed class KsefInvoiceService : IInvoiceService
             }
             catch (FormatException ex)
             {
-                throw new InvalidDataException(
-                    $"Nieprawidłowy format hash dla faktury KSeF: {invoice.KsefNumber}",
-                    ex);
+                throw new InvalidDataException($"Nieprawidłowy format hash dla faktury KSeF: {invoice.KsefNumber}",ex);
             }
 
             if (hashBytes.Length != 32)
             {
-                throw new InvalidDataException(
-                    $"Nieprawidłowa długość hash SHA-256 dla faktury KSeF: {invoice.KsefNumber}");
+                throw new InvalidDataException($"Nieprawidłowa długość hash SHA-256 dla faktury KSeF: {invoice.KsefNumber}");
             }
-            if (string.IsNullOrWhiteSpace(invoice.FileName) ||
-    invoice.FileName != Path.GetFileName(invoice.FileName) ||
-    invoice.FileName.Contains('\\'))
+            if (string.IsNullOrWhiteSpace(invoice.FileName) || invoice.FileName != Path.GetFileName(invoice.FileName) || invoice.FileName.Contains('\\'))
             {
-                throw new InvalidDataException(
-                    $"Nieprawidłowa nazwa pliku w metadanych KSeF: {invoice.FileName}");
+                throw new InvalidDataException($"Nieprawidłowa nazwa pliku w metadanych KSeF: {invoice.FileName}");
             }
-            if (!invoice.FileName.EndsWith(
-    ".xml",
-    StringComparison.OrdinalIgnoreCase))
+            if (!invoice.FileName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException(
-                    $"Nieprawidłowe rozszerzenie pliku faktury KSeF: {invoice.FileName}");
+                throw new InvalidDataException($"Nieprawidłowe rozszerzenie pliku faktury KSeF: {invoice.FileName}");
             }
             if (!metadataFileNames.Add(invoice.FileName))
             {
-                throw new InvalidDataException(
-                    $"Zduplikowany wpis w metadanych KSeF: {invoice.FileName}");
+                throw new InvalidDataException($"Zduplikowany wpis w metadanych KSeF: {invoice.FileName}");
             }
             if (!metadataKsefNumbers.Add(invoice.KsefNumber))
             {
-                throw new InvalidDataException(
-                    $"Zduplikowany numer KSeF w metadanych: {invoice.KsefNumber}");
+                throw new InvalidDataException($"Zduplikowany numer KSeF w metadanych: {invoice.KsefNumber}");
             }
         }
         await using var file = File.OpenRead(archivePath);
 
-        await using var gzip = new GZipStream(
-            file,
-            CompressionMode.Decompress);
+        await using var gzip = new GZipStream(file, CompressionMode.Decompress);
 
         using var tar = new TarReader(gzip, leaveOpen: true);
 
         TarEntry? entry;
 
-        while ((entry = await tar.GetNextEntryAsync(
-            cancellationToken: cancellationToken)) is not null)
+        while ((entry = await tar.GetNextEntryAsync(cancellationToken: cancellationToken)) is not null)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             if (entry.EntryType != TarEntryType.RegularFile)
                 continue;
 
-
-            if (string.Equals(
-                entry.Name.Replace('\\', '/').Split('/').Last(),
-                "_metadata.json",
-                StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(entry.Name.Replace('\\', '/').Split('/').Last(), "_metadata.json", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            if (!entry.Name.EndsWith(
-                ".xml",
-                StringComparison.OrdinalIgnoreCase))
+            if (!entry.Name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException(
-                    $"Nieoczekiwany plik w archiwum KSeF: {entry.Name}");
+                throw new InvalidDataException($"Nieoczekiwany plik w archiwum KSeF: {entry.Name}");
             }
 
             if (entry.DataStream is null)
-                throw new InvalidDataException(
-                    $"Brak danych pliku XML: {entry.Name}");
+                throw new InvalidDataException($"Brak danych pliku XML: {entry.Name}");
 
-            var fileName = entry.Name
-      .Replace('\\', '/')
-      .Split('/')
-      .Last();
+            var fileName = entry.Name.Replace('\\', '/').Split('/').Last();
 
             if (!processedFiles.Add(fileName))
             {
-                throw new InvalidDataException(
-                    $"Zduplikowany plik XML w paczce KSeF: {fileName}");
+                throw new InvalidDataException($"Zduplikowany plik XML w paczce KSeF: {fileName}");
             }
 
-            var invoiceMetadata = invoices.SingleOrDefault(
-                x => string.Equals(
-                    x.FileName,
-                    fileName,
-                    StringComparison.OrdinalIgnoreCase));
+            var invoiceMetadata = invoices.SingleOrDefault(x => string.Equals(x.FileName, fileName, StringComparison.OrdinalIgnoreCase));
 
             if (invoiceMetadata is null)
             {
-                throw new InvalidDataException(
-                    $"Brak metadanych KSeF dla pliku XML: {fileName}");
+                throw new InvalidDataException($"Brak metadanych KSeF dla pliku XML: {fileName}");
             }
 
             using var memoryStream = new MemoryStream();
 
-            await entry.DataStream.CopyToAsync(
-                memoryStream,
-                cancellationToken);
+            await entry.DataStream.CopyToAsync( memoryStream, cancellationToken);
 
             var xmlBytes = memoryStream.ToArray();
 
-            var calculatedHash = Convert.ToBase64String(
-                SHA256.HashData(xmlBytes));
+            var calculatedHash = Convert.ToBase64String(SHA256.HashData(xmlBytes));
 
-            if (!string.Equals(
-                calculatedHash,
-                invoiceMetadata.InvoiceHash,
-                StringComparison.Ordinal))
+            if (!string.Equals(calculatedHash, invoiceMetadata.InvoiceHash, StringComparison.Ordinal))
             {
-                throw new InvalidDataException(
-                    $"Nieprawidłowy hash faktury KSeF: {invoiceMetadata.KsefNumber}");
+                throw new InvalidDataException($"Nieprawidłowy hash faktury KSeF: {invoiceMetadata.KsefNumber}");
             }
 
-            var validatedInvoice = new ValidatedInvoice(
-                invoiceMetadata.KsefNumber,
-                xmlBytes);
+            var validatedInvoice = new ValidatedInvoice(invoiceMetadata.KsefNumber, xmlBytes, invoiceMetadata.VatAmountPln, invoiceMetadata.InvoicingDate);
 
             await processInvoiceAsync(validatedInvoice, cancellationToken);
 
@@ -888,10 +826,7 @@ public sealed class KsefInvoiceService : IInvoiceService
         }
         if (processedFiles.Count != invoices.Count)
         {
-            throw new InvalidDataException(
-                $"Niezgodna liczba plików XML i metadanych. " +
-                $"Metadane: {invoices.Count}, " +
-                $"pliki XML: {processedFiles.Count}.");
+            throw new InvalidDataException($"Niezgodna liczba plików XML i metadanych. Metadane: {invoices.Count}, pliki XML: {processedFiles.Count}.");
         }
         return invoiceCount;
     }

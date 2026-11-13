@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.RateLimiting;
+using xKsef.Api.Authorization;
 using xKsef.Api.ExceptionHandlers;
 using xKsef.Application.Invoices.Visualization;
 using xKsef.Infrastructure;
@@ -15,10 +16,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 
 //builder.Services.AddScoped<IInvoiceService, FakeInvoiceService>();
-builder.Services.AddKsefInfrastructure(
-    builder.Configuration);
+builder.Services.AddKsefInfrastructure(builder.Configuration);
 builder.Services.AddDatabaseInfrastructure(builder.Configuration);
-    builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
+builder.Services.AddScoped<TenantAuthorizationFilter>();
+builder.Services.AddScoped<CredentialManagementAuthorizationFilter>();
+
+builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
 builder.Services.AddExceptionHandler<ExternalServiceRateLimitExceptionHandler>();
 builder.Services.AddProblemDetails();
 
@@ -26,21 +29,13 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
 
-var jwtIssuer = builder.Configuration["Jwt:Issuer"]
-    ?? throw new InvalidOperationException("Brak Jwt:Issuer.");
-
-var jwtAudience = builder.Configuration["Jwt:Audience"]
-    ?? throw new InvalidOperationException("Brak Jwt:Audience.");
-
-var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
-    ?? throw new InvalidOperationException("Brak Jwt:SigningKey.");
-
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("Brak Jwt:Issuer.");
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("Brak Jwt:Audience.");
+var jwtSigningKey = builder.Configuration["Jwt:SigningKey"] ?? throw new InvalidOperationException("Brak Jwt:SigningKey.");
 var signingKeyBytes = Convert.FromBase64String(jwtSigningKey);
-
 if (signingKeyBytes.Length < 32)
 {
-    throw new InvalidOperationException(
-        "Klucz JWT musi mieć co najmniej 256 bitów.");
+    throw new InvalidOperationException("Klucz JWT musi mieć co najmniej 256 bitów.");
 }
 
 builder.Services
@@ -69,26 +64,19 @@ builder.Services
         };
     });
 
-builder.Services.AddSingleton<
-    IInvoiceHtmlTransformer,
-    KsefInvoiceXsltTransformer>();
+builder.Services.AddSingleton<IInvoiceHtmlTransformer,KsefInvoiceXsltTransformer>();
 
-builder.Services.AddAuthorization();
+builder.Services.AddApplicationOperatorAuthorization();
 
 builder.Services.AddRateLimiter(options =>
 {
-    options.RejectionStatusCode =
-        StatusCodes.Status429TooManyRequests;
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
     options.AddPolicy("login", context =>
     {
-        var ipAddress =
-            context.Connection.RemoteIpAddress?.ToString()
-            ?? "unknown";
+        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ipAddress,
-            factory: _ => new FixedWindowRateLimiterOptions
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey: ipAddress, factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 5,
                 Window = TimeSpan.FromMinutes(1),
@@ -98,20 +86,34 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+builder.Services.AddHttpClient("CredentialService", client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["CredentialService:BaseUrl"] ?? throw new InvalidOperationException("Brak adresu CredentialService."));
+}).ConfigurePrimaryHttpMessageHandler(() =>
+{
+    string thumbprint = builder.Configuration["CredentialService:ClientCertificateThumbprint"]?.Replace(" ", "").ToUpperInvariant() ?? throw new InvalidOperationException("Brak Thumbprint certyfikatu klienta.");
+
+    using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+    store.Open(OpenFlags.ReadOnly);
+
+    X509Certificate2? certificate = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false).OfType<X509Certificate2>().FirstOrDefault();
+
+    if (certificate == null || !certificate.HasPrivateKey) throw new InvalidOperationException("Nie znaleziono certyfikatu klienta z kluczem prywatnym.");
+
+    var handler = new HttpClientHandler();
+    handler.ClientCertificateOptions = ClientCertificateOption.Manual;
+    handler.ClientCertificates.Add(certificate);
+
+    return handler;
+});
 
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();
-
-    var seeder = scope.ServiceProvider
-        .GetRequiredService<DevelopmentUserSeeder>();
-
-    var password = app.Configuration["DevelopmentUser:Password"]
-        ?? throw new InvalidOperationException(
-            "Brak konfiguracji DevelopmentUser:Password.");
-
+    var seeder = scope.ServiceProvider.GetRequiredService<DevelopmentUserSeeder>();
+    var password = app.Configuration["DevelopmentUser:Password"] ?? throw new InvalidOperationException("Brak konfiguracji DevelopmentUser:Password.");
     await seeder.SeedAsync(password);
 }
 
