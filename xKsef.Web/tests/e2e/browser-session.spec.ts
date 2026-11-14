@@ -26,6 +26,13 @@ async function mockApi(page: Page, authenticated = false) {
     if (path.endsWith('/register')) return send(state.registerStatus, state.registerStatus === 201 ? { userId: 'registered' } : { errors: { Identity: ['Ten adres e-mail jest już używany.'] } });
     if (path.endsWith('/logout')) { if (state.logoutStatus === 204) state.authenticated = false; return send(state.logoutStatus); }
     if (path === '/api/tenants') { if (state.tenantDelay) await new Promise(resolve => setTimeout(resolve, state.tenantDelay)); return send(state.tenantStatus, tenants); }
+    if (path === '/api/invoices/query') {
+      const item = { ksefNumber: 'fixture-1', invoiceNumber: 'FV/2026/000001', sellerName: 'Sprzedawca', sellerNip: '1234567890',
+        buyerName: 'Nabywca', buyerNip: '0987654321', issueDate: '2026-11-01', invoicingDate: null,
+        currency: 'PLN', grossAmount: 123, netAmount: 100, vatAmount: 23, vatAmountPln: 23,
+        grossAmountExact: '123.00', netAmountExact: '100.00', vatAmountExact: '23.00', vatAmountPlnExact: '23.00' };
+      return send(200, { items: [item], summaries: [{ currency: 'PLN', invoiceCount: 1, netTotal: 100, vatTotal: 23, grossTotal: 123, missingNetCount: 0, missingVatCount: 0 }] });
+    }
     throw new Error(`Unexpected API call: ${path}`);
   });
   return state;
@@ -37,7 +44,7 @@ async function login(page: Page) {
   await expect(page.getByRole('button', { name: 'Wyloguj', exact: true })).toBeVisible();
 }
 
-test('cookie login, /me, lazy modules and ERP shell; no web storage or real invoices', async ({ page }) => {
+test('cookie login, /me, lazy invoice module and ERP shell without web storage', async ({ page }) => {
   const state = await mockApi(page); const chunks: string[] = [];
   page.on('request', request => { if (request.url().includes('/assets/')) chunks.push(request.url()); });
   await page.goto('/login'); await expect(page.getByRole('heading', { name: 'Zaloguj się' })).toBeVisible();
@@ -47,7 +54,7 @@ test('cookie login, /me, lazy modules and ERP shell; no web storage or real invo
   expect(state.posts).toEqual([{ path: '/api/browser-auth/login', csrf: 'csrf-1-false' }]); expect(state.tokens).toBe(2);
   for (const label of ['Kontrahenci', 'Banki i rozrachunki', 'Księgowość', 'Podatki', 'Środki trwałe', 'Kadry i płace', 'Administracja']) await expect(page.getByRole('button', { name: label })).toBeDisabled();
   expect(await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }))).toEqual({ local: [], session: [] });
-  expect(state.paths.some(path => path.startsWith('/api/invoices'))).toBe(false);
+  expect(state.paths.filter(path => path.startsWith('/api/invoices'))).toEqual(['/api/invoices/query']);
   await page.screenshot({ path: 'test-results/browser-shell.png', fullPage: true });
 });
 
@@ -82,7 +89,8 @@ test('tenant A → B → A resets table filters and selection with duplicate ten
   await mockApi(page, true); await page.goto('/app/invoices');
   const select = page.getByLabel('Aktywny tenant'); await expect(select).toHaveValue(A);
   await page.getByLabel('Szukaj w fakturach').fill('FV/2026/000001');
-  const first = page.locator('[role="row"][row-id="demo-sales-000001"]'); await first.getByRole('checkbox').check(); await expect(page.getByTestId('selected-count')).toHaveText('1');
+  const first = page.getByRole('row').filter({ has: page.getByRole('gridcell', { name: 'FV/2026/000001', exact: true }) });
+  await first.getByRole('checkbox').check(); await expect(page.getByTestId('selected-count')).toHaveText('1');
   await select.selectOption(B); await expect(page.getByLabel('Szukaj w fakturach')).toHaveValue(''); await expect(page.getByTestId('selected-count')).toHaveText('0');
   await expect(page.getByText('Rola: User', { exact: true })).toBeVisible();
   await select.selectOption(A); await expect(page.getByLabel('Szukaj w fakturach')).toHaveValue(''); await expect(page.getByTestId('selected-count')).toHaveText('0');

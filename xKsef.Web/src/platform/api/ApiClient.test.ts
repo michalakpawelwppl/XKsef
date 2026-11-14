@@ -70,6 +70,29 @@ describe('API transport and CSRF', () => {
 });
 
 describe('context generations', () => {
+  it.each([200, 401, 403])('ignores cancelled HTTP %s in the same tenant even when transport ignores the signal', async status => {
+    const pending = deferred<Response>(); const { api } = setup(async () => pending.promise);
+    api.onUnauthorized = vi.fn(); api.onTenantForbidden = vi.fn();
+    const controller = new AbortController();
+    const result = api.request('/api/data', { scope: 'tenant', signal: controller.signal });
+    const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort(); pending.resolve(json({}, status)); await rejected;
+    expect(api.onUnauthorized).not.toHaveBeenCalled(); expect(api.onTenantForbidden).not.toHaveBeenCalled();
+  });
+  it.each([200, 401, 403])('checks explicit cancellation after decoding HTTP %s before session callbacks', async status => {
+    const body = deferred<unknown>(); const entered = deferred<void>(); const response = json({}, status);
+    response.json = () => { entered.resolve(); return body.promise; };
+    const { api } = setup(async () => response); api.onUnauthorized = vi.fn(); api.onTenantForbidden = vi.fn();
+    const controller = new AbortController(); const result = api.request('/api/data', { scope: 'tenant', signal: controller.signal });
+    const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    await entered.promise; controller.abort(); body.resolve({}); await rejected;
+    expect(api.onUnauthorized).not.toHaveBeenCalled(); expect(api.onTenantForbidden).not.toHaveBeenCalled();
+  });
+  it('does not start an already cancelled request', async () => {
+    const fetch = vi.fn<Fetch>(); const { api } = setup(fetch); const controller = new AbortController(); controller.abort();
+    await expect(api.request('/api/data', { scope: 'tenant', signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('aborts tenant requests on A → B → A but leaves session requests current', () => {
     const { context } = setup(vi.fn()); const tenant = context.capture('tenant'); const session = context.capture('session');
     context.selectTenant('B'); context.selectTenant('A'); expect(tenant.signal.aborted).toBe(true); expect(context.isCurrent(tenant)).toBe(false); expect(context.isCurrent(session)).toBe(true);

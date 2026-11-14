@@ -144,8 +144,8 @@ test('wirtualizuje 100 000 rekordów i pozwala przejść do ostatniej faktury', 
 test('ma przewijanie poziome na węższym ekranie', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 850 }); await openInvoices(page);
   const viewport = page.locator('.ag-body-horizontal-scroll-viewport');
-  expect(await viewport.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect.poll(() => viewport.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test('działa bez żądań API, KSeF i zasobów zewnętrznych oraz bez eksportu', async ({ page }) => {

@@ -30,7 +30,7 @@ public sealed class InvoiceReadTests
         DateOnly to = new(2026, 11, 30);
         using var cancellation = new CancellationTokenSource();
         var domain = Assert.Single(await service.GetInvoicesAsync(tenantId, from, to, Direction.Sales, cancellation.Token));
-        InvoiceReadTestData.AssertJson(JsonSerializer.SerializeToElement(domain, JsonSerializerOptions.Web), stored);
+        InvoiceReadTestData.AssertJson(JsonSerializer.SerializeToElement(domain, JsonSerializerOptions.Web), stored, exactAmounts: false);
         Assert.Equal((tenantId, from, to, Direction.Sales, cancellation.Token), repository.LastRequest);
 
         var controller = new InvoicesController(service, repository) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
@@ -108,7 +108,7 @@ public sealed class InvoiceReadTests
 
 internal static class InvoiceReadTestData
 {
-    private static readonly string[] PropertyNames = ["ksefNumber", "invoiceNumber", "sellerName", "sellerNip", "issueDate", "grossAmount", "currency", "buyerNip", "buyerName", "netAmount", "vatAmount", "vatAmountPln", "invoicingDate"];
+    private static readonly string[] PropertyNames = ["ksefNumber", "invoiceNumber", "sellerName", "sellerNip", "issueDate", "grossAmount", "currency", "buyerNip", "buyerName", "netAmount", "vatAmount", "vatAmountPln", "invoicingDate", "grossAmountExact", "netAmountExact", "vatAmountExact", "vatAmountPlnExact"];
 
     public static StoredInvoice Create(Guid tenantId, string number, string variant = "values") => new()
     {
@@ -123,9 +123,9 @@ internal static class InvoiceReadTestData
         ImportedAt = DateTimeOffset.UtcNow, XmlBytes = [1, 2, 3, 4]
     };
 
-    public static void AssertJson(JsonElement json, StoredInvoice expected)
+    public static void AssertJson(JsonElement json, StoredInvoice expected, bool exactAmounts = true)
     {
-        Assert.Equal(PropertyNames.OrderBy(x => x), json.EnumerateObject().Select(x => x.Name).OrderBy(x => x));
+        Assert.Equal(PropertyNames.Where(name => exactAmounts || !name.EndsWith("Exact", StringComparison.Ordinal)).OrderBy(x => x), json.EnumerateObject().Select(x => x.Name).OrderBy(x => x));
         Assert.Equal(expected.KsefNumber, json.GetProperty("ksefNumber").GetString());
         Assert.Equal(expected.InvoiceNumber, json.GetProperty("invoiceNumber").GetString());
         Assert.Equal(expected.SellerName, json.GetProperty("sellerName").GetString());
@@ -133,6 +133,13 @@ internal static class InvoiceReadTestData
         Assert.Equal(expected.IssueDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), json.GetProperty("issueDate").GetString());
         Assert.Equal(expected.GrossAmount, json.GetProperty("grossAmount").GetDecimal());
         Assert.Equal(expected.Currency, json.GetProperty("currency").GetString());
+        if (exactAmounts)
+        {
+            Assert.Equal(expected.GrossAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture), json.GetProperty("grossAmountExact").GetString());
+            Assert.Equal(expected.NetAmount?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture), json.GetProperty("netAmountExact").GetString());
+            Assert.Equal(expected.VatAmount?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture), json.GetProperty("vatAmountExact").GetString());
+            Assert.Equal(expected.VatAmountPln?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture), json.GetProperty("vatAmountPlnExact").GetString());
+        }
         Assert.Equal(expected.BuyerNip, json.GetProperty("buyerNip").GetString());
         Assert.Equal(expected.BuyerName, json.GetProperty("buyerName").GetString());
         AssertAmount(json.GetProperty("netAmount"), expected.NetAmount);

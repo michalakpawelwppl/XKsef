@@ -6,17 +6,18 @@ import type { Invoice, InvoiceDirection } from './Invoice';
 
 const rowId = (invoice: Invoice) => invoice.id;
 
-interface Props {
-  readonly invoices: readonly Invoice[];
+interface Props<T extends Invoice> {
+  readonly invoices: readonly T[];
   readonly direction: InvoiceDirection;
   readonly onReset: () => void;
+  readonly onFilteredRowsChange?: (rows: readonly T[]) => void;
 }
 
-export function InvoiceTable({ invoices, direction, onReset }: Props) {
+export function InvoiceTable<T extends Invoice>({ invoices, direction, onReset, onFilteredRowsChange }: Props<T>) {
   const columns = useMemo(() => invoiceColumns(direction), [direction]);
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(invoices.length);
-  const [selected, setSelected] = useState<readonly Invoice[]>([]);
+  const [selected, setSelected] = useState<readonly T[]>([]);
   return (
     <section className="invoice-panel" aria-label="Lista faktur">
       <div className="table-toolbar">
@@ -29,8 +30,9 @@ export function InvoiceTable({ invoices, direction, onReset }: Props) {
           <span>Zaznaczone: <strong data-testid="selected-count">{formatCount(selected.length)}</strong></span>
         </div>
       </div>
-      <DataTable rows={invoices} columns={columns} getRowId={rowId} label={direction === 'sales' ? 'Faktury sprzedaży' : 'Faktury zakupu'}
-        searchText={search} onSelectionChange={setSelected} onVisibleCountChange={setVisibleCount} />
+      {invoices.length > 0 && visibleCount === 0 && <p role="status">Brak faktur spełniających ustawione filtry. Zmień filtry lub zresetuj widok.</p>}
+      <DataTable<T> rows={invoices} columns={columns} getRowId={rowId} label={direction === 'sales' ? 'Faktury sprzedaży' : 'Faktury zakupu'}
+        searchText={search} onSelectionChange={setSelected} onVisibleCountChange={setVisibleCount} onFilteredRowsChange={onFilteredRowsChange} />
       <div className="table-footer">
         <span>Strzałki i Tab: nawigacja · Spacja: wybór wiersza · Nagłówek: sortowanie</span>
         <span>Kwoty w walucie faktury · Puste pole oznacza brak danych</span>

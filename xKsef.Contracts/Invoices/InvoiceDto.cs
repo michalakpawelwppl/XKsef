@@ -15,4 +15,10 @@ public class InvoiceDto
     public decimal? VatAmount { get; set; }
     public decimal? VatAmountPln { get; set; }
     public DateTimeOffset? InvoicingDate { get; set; }
+
+    // Stored amounts are decimal(18,2); preserve the existing numeric JSON fields.
+    public string GrossAmountExact => GrossAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+    public string? NetAmountExact => NetAmount?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+    public string? VatAmountExact => VatAmount?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+    public string? VatAmountPlnExact => VatAmountPln?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
 }

@@ -9,7 +9,8 @@ export function AppShell() {
       <span className="header-caption">Finanse i księgowość</span><span className="session-user">{state.user?.login}</span>
       <button className="secondary-button" onClick={() => { void store.logout(); }} disabled={state.busy}>Wyloguj</button></header>
     <aside className="sidebar"><p className="nav-caption">Moduły</p><nav aria-label="Moduły ERP">
-      <NavLink to="/app/invoices">Faktury</NavLink>
+      <NavLink to="/app/invoices/sales">Faktury sprzedaży</NavLink>
+      <NavLink to="/app/invoices/purchase">Faktury zakupu</NavLink>
       {futureModules.map(label => <button key={label} disabled title="Moduł w przygotowaniu">{label}<small>W przygotowaniu</small></button>)}
     </nav></aside>
     <div className="workspace">

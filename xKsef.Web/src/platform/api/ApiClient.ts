@@ -40,17 +40,22 @@ export class ApiClient {
   }
   async request<T>(path: string | ((snapshot: RequestSnapshot) => string), options: RequestOptions): Promise<T> {
     const snapshot = this.context.capture(options.scope);
+    this.#assertCurrent(snapshot, options.signal);
     const method = options.method ?? 'GET';
     const headers = new Headers({ Accept: 'application/json' });
     if (snapshot.tenantId) headers.set('X-Tenant-Id', snapshot.tenantId);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     if (method !== 'GET') headers.set('X-CSRF-TOKEN', await this.#csrf());
-    this.context.assertCurrent(snapshot);
+    this.#assertCurrent(snapshot, options.signal);
     const response = await this.#fetch(typeof path === 'function' ? path(snapshot) : path, {
       method, headers, body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: options.signal ? AbortSignal.any([snapshot.signal, options.signal]) : snapshot.signal,
     }, snapshot);
-    return await this.#decode(response, snapshot) as T;
+    return await this.#decode(response, snapshot, options.signal) as T;
+  }
+  #assertCurrent(snapshot: RequestSnapshot, signal?: AbortSignal | null) {
+    this.context.assertCurrent(snapshot);
+    signal?.throwIfAborted();
   }
   async #fetch(path: string, init: RequestInit, snapshot: RequestSnapshot) {
     const url = new URL(path, 'https://same-origin.invalid');
@@ -58,23 +63,23 @@ export class ApiClient {
       throw new Error('Klient API obsługuje wyłącznie ścieżki /api/ tego samego originu.');
     try {
       const response = await this.fetcher(path, { ...init, credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
-      this.context.assertCurrent(snapshot); return response;
+      this.#assertCurrent(snapshot, init.signal); return response;
     } catch (error) {
-      this.context.assertCurrent(snapshot);
+      this.#assertCurrent(snapshot, init.signal);
       if (error instanceof Error && (error.name === 'AbortError' || error instanceof StaleContextError)) throw error;
       throw new ApiError(0, statusMessage(0));
     }
   }
-  async #decode(response: Response, snapshot: RequestSnapshot): Promise<unknown> {
+  async #decode(response: Response, snapshot: RequestSnapshot, signal?: AbortSignal): Promise<unknown> {
     let data: unknown;
     if (response.status !== 204) {
       const type = response.headers.get('Content-Type') ?? '';
       if (type.includes('json')) {
         try { data = await response.json(); }
-        catch { this.context.assertCurrent(snapshot); if (response.ok) throw new ApiError(502, 'Nieprawidłowa odpowiedź API.'); }
-      } else if (response.ok) { this.context.assertCurrent(snapshot); throw new ApiError(502, 'API zwróciło nieoczekiwany format odpowiedzi.'); }
+        catch { this.#assertCurrent(snapshot, signal); if (response.ok) throw new ApiError(502, 'Nieprawidłowa odpowiedź API.'); }
+      } else if (response.ok) { this.#assertCurrent(snapshot, signal); throw new ApiError(502, 'API zwróciło nieoczekiwany format odpowiedzi.'); }
     }
-    this.context.assertCurrent(snapshot);
+    this.#assertCurrent(snapshot, signal);
     if (!response.ok) {
       if (response.status === 401 && snapshot.scope !== 'anonymous') this.onUnauthorized?.();
       if (response.status === 403 && snapshot.scope === 'tenant') this.onTenantForbidden?.();
