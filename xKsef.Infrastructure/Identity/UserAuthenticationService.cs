@@ -67,6 +67,6 @@ internal sealed class UserAuthenticationService
 
         return new AuthenticatedUser(
      user.Id,
-     user.UserName!);
+     user.UserName!, user.SecurityStamp);
     }
 }

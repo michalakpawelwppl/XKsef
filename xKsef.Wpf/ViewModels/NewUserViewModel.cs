@@ -47,14 +47,14 @@ public sealed partial class NewUserViewModel : ObservableObject, IDisposable
         _authenticationApiClient = authenticationApiClient;
         _tokenStore = tokenStore;
         var session = tokenStore.GetSessionSnapshot();
-        _context = new ApiRequestContext(session.SessionVersion, session.SessionVersion, null, session.AccessToken, _cancellation.Token, ApiRequestScope.User);
-        IsSessionValid = !string.IsNullOrWhiteSpace(session.AccessToken);
+        _context = new ApiRequestContext(session.SessionVersion, session.SessionVersion, null, null, _cancellation.Token, ApiRequestScope.Anonymous);
+        IsSessionValid = true;
         _tokenStore.TokenChanged += OnTokenChanged;
         if (!IsCurrentSession()) InvalidateSession();
     }
 
     private bool IsCurrentSession() => !_isClosed && !_context.CancellationToken.IsCancellationRequested
-        && _tokenStore.SessionVersion == _context.SessionVersion && !string.IsNullOrWhiteSpace(_context.AccessToken);
+        && _tokenStore.SessionVersion == _context.SessionVersion;
 
     [RelayCommand(CanExecute = nameof(CanEdit))]
     private async Task SaveAsync()
@@ -75,7 +75,7 @@ public sealed partial class NewUserViewModel : ObservableObject, IDisposable
         try
         {
             IsSaving = true;
-            UserCreationResult result = await _authenticationApiClient.CreateUserAsync(_context, Login.Trim(), Email.Trim(), Password);
+            UserCreationResult result = await _authenticationApiClient.RegisterAsync(_context, Login.Trim(), Email.Trim(), Password);
             if (!IsCurrentSession()) return;
 
             switch (result.StatusCode)
@@ -87,11 +87,14 @@ public sealed partial class NewUserViewModel : ObservableObject, IDisposable
                     ErrorMessage = string.Join(Environment.NewLine, result.Errors.Select(TranslateError).Distinct());
                     if (string.IsNullOrWhiteSpace(ErrorMessage)) ErrorMessage = "Sprawdź poprawność danych użytkownika.";
                     break;
+                case HttpStatusCode.TooManyRequests:
+                    ErrorMessage = "Zbyt wiele prób rejestracji. Spróbuj ponownie za chwilę.";
+                    break;
                 case HttpStatusCode.Unauthorized:
-                    ErrorMessage = "Sesja wygasła. Zaloguj się ponownie.";
+                    ErrorMessage = "Rejestracja jest obecnie niedostępna.";
                     break;
                 case HttpStatusCode.Forbidden:
-                    ErrorMessage = "Brak uprawnień operatora do tworzenia użytkowników.";
+                    ErrorMessage = "Rejestracja jest obecnie niedostępna.";
                     break;
                 default:
                     ErrorMessage = "Nie udało się utworzyć użytkownika. Spróbuj ponownie później.";
@@ -117,6 +120,7 @@ public sealed partial class NewUserViewModel : ObservableObject, IDisposable
 
     private static string TranslateError(string code) => code switch
     {
+        "DuplicateAccount" => "Login lub adres e-mail jest już używany.",
         "DuplicateUserName" => "Użytkownik o tym loginie już istnieje.",
         "DuplicateEmail" => "Podany adres e-mail jest już używany.",
         "InvalidUserName" => "Podaj poprawny login (maksymalnie 256 znaków).",
@@ -141,7 +145,7 @@ public sealed partial class NewUserViewModel : ObservableObject, IDisposable
 
     private void InvalidateSession()
     {
-        if (_isClosed || _tokenStore.SessionVersion == _context.SessionVersion && !string.IsNullOrWhiteSpace(_context.AccessToken)) return;
+        if (_isClosed || _tokenStore.SessionVersion == _context.SessionVersion) return;
         IsSessionValid = false;
         _cancellation.Cancel();
         Password = string.Empty;

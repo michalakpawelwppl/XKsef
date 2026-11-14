@@ -58,7 +58,7 @@ public sealed class WindowNavigationService : IWindowNavigationService
         void CloseWindow(bool? result)
         {
             if (result == true)
-                System.Windows.MessageBox.Show(window, "Użytkownik został utworzony.", "Nowy użytkownik", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                System.Windows.MessageBox.Show(window, "Konto zostało utworzone. Zaloguj się, aby kontynuować.", "Nowy użytkownik", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
             window.DialogResult = result;
         }
 
@@ -77,6 +77,23 @@ public sealed class WindowNavigationService : IWindowNavigationService
         }
     }
 
+    public void ShowTenantUsersWindow(Action<string?> currentAccessChanged)
+    {
+        var window = _serviceProvider.GetRequiredService<TenantUsersWindow>();
+        var viewModel = (TenantUsersViewModel)window.DataContext;
+        window.Owner = System.Windows.Application.Current.MainWindow;
+        void CloseWindow() => window.DialogResult = false;
+        async void Loaded(object sender, System.Windows.RoutedEventArgs args)
+        {
+            if (!viewModel.IsValid) { CloseWindow(); return; }
+            await viewModel.RefreshCommand.ExecuteAsync(null);
+        }
+        viewModel.CloseRequested += CloseWindow;
+        viewModel.CurrentAccessChanged += currentAccessChanged;
+        window.Loaded += Loaded;
+        try { window.ShowDialog(); }
+        finally { window.Loaded -= Loaded; viewModel.CloseRequested -= CloseWindow; viewModel.CurrentAccessChanged -= currentAccessChanged; viewModel.Dispose(); }
+    }
     public bool? ShowLoginWindow()
     {
         var loginWindow = _serviceProvider.GetRequiredService<LoginWindow>();

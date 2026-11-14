@@ -71,6 +71,18 @@ public sealed class KsefInvoiceService : IInvoiceService
             // 2. Oczekiwanie na zakończenie eksportu
             var status = await WaitForInvoiceImportAsync(userId, tenantId, session, cancellationToken);
 
+            // A completed, non-truncated export may contain no invoices and no archive parts.
+            // Missing package/parts or contradictory metadata must still fail below.
+            if (status.Package.InvoiceCount == 0 && status.Package.Size == 0 && !status.Package.IsTruncated
+                && status.Package.Parts is { Count: 0 })
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return new InvoicePackageReadResult
+                {
+                    ReferenceNumber = session.ReferenceNumber,
+                    DeclaredInvoiceCount = 0, ReadInvoiceCount = 0, ImportedCount = 0, SkippedCount = 0
+                };
+            }
             // 3. Pobranie i odszyfrowanie części paczki
             decryptedFiles = await DownloadAndDecryptPackageAsync(status, session, cancellationToken);
 

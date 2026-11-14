@@ -1,5 +1,5 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
+﻿using xKsef.Api.Hosting;
+using xKsef.Api.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.RateLimiting;
 using xKsef.Api.Authorization;
@@ -22,6 +22,7 @@ builder.Services.AddDatabaseInfrastructure(builder.Configuration);
 builder.Services.AddScoped<TenantAuthorizationFilter>();
 builder.Services.AddScoped<CredentialManagementAuthorizationFilter>();
 
+builder.Services.AddExceptionHandler<BrowserSessionExceptionHandler>();
 builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
 builder.Services.AddExceptionHandler<ExternalServiceRateLimitExceptionHandler>();
 builder.Services.AddExceptionHandler<CredentialServiceExceptionHandler>();
@@ -31,44 +32,12 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
 
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("Brak Jwt:Issuer.");
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("Brak Jwt:Audience.");
-var jwtSigningKey = builder.Configuration["Jwt:SigningKey"] ?? throw new InvalidOperationException("Brak Jwt:SigningKey.");
-var signingKeyBytes = Convert.FromBase64String(jwtSigningKey);
-if (signingKeyBytes.Length < 32)
-{
-    throw new InvalidOperationException("Klucz JWT musi mieć co najmniej 256 bitów.");
-}
-
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = jwtIssuer,
-
-            ValidateAudience = true,
-            ValidAudience = jwtAudience,
-
-            ValidateLifetime = true,
-            RequireExpirationTime = true,
-
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                signingKeyBytes),
-
-            RequireSignedTokens = true,
-            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
-
-            ClockSkew = TimeSpan.FromSeconds(30)
-        };
-    });
+builder.Services.AddApiAuthentication(builder.Configuration, builder.Environment);
 
 builder.Services.AddSingleton<IInvoiceHtmlTransformer,KsefInvoiceXsltTransformer>();
 
 builder.Services.AddApplicationOperatorAuthorization();
+builder.Services.AddRegistrationRateLimiting();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -127,6 +96,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseExceptionHandler();
 app.UseHttpsRedirection();
+app.UseBrowserFrontend();
 
 app.UseRouting();
 

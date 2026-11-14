@@ -15,8 +15,4 @@ public sealed class CreateTenantRequest
     [Required]
     [StringLength(200)]
     public required string TaxEntityName { get; init; }
-
-    [Required]
-    [StringLength(256)]
-    public required string UserLogin { get; init; }
 }

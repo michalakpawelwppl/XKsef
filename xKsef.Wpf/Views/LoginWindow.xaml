@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:behaviors="clr-namespace:xKsef.Wpf.Behaviors"
         Title="Logowanie - xKsef"
-        Height="250"
+        MinHeight="250" SizeToContent="Height"
         Width="380"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize">

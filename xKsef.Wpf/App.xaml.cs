@@ -49,6 +49,10 @@ public partial class App : System.Windows.Application
                 .AddHttpMessageHandler<BearerTokenHandler>()
                 .AddHttpMessageHandler<TenantHeaderHandler>();
 
+                services.AddHttpClient<ITenantUsersApiClient, TenantUsersApiClient>(client => client.BaseAddress = new Uri(apiBaseUrl))
+                    .AddHttpMessageHandler<BearerTokenHandler>().AddHttpMessageHandler<TenantHeaderHandler>();
+                services.AddTransient<TenantUsersViewModel>();
+                services.AddTransient<TenantUsersWindow>();
                 services.AddTransient<MainViewModel>();
                 services.AddTransient<MainWindow>();
                 services.AddTransient<NewTenantViewModel>();

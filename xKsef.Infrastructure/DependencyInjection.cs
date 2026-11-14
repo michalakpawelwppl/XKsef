@@ -61,7 +61,8 @@ public static class DependencyInjection
         });
 
         services.AddCryptographyClient();
-        services.AddHostedService<KsefCryptographyWarmupService>();
+        if (configuration.GetValue("Ksef:WarmupOnStartup", true))
+            services.AddHostedService<KsefCryptographyWarmupService>();
         services.AddMemoryCache();
         services.AddSingleton<PendingKsefAuthenticationStore>();
         services.AddScoped<ICredentialServiceClient, CredentialServiceClient>();
@@ -99,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<IInvoiceImportTransaction, InvoiceImportTransaction>();
         services.AddScoped<IInvoicePackageImportService, InvoicePackageImportService>();
         services.AddScoped<ITenantService, TenantService>();
+        services.AddScoped<ITenantUsersService, TenantUsersService>();
         services.AddScoped<ITenantAccessService, TenantAccessService>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IInvoiceMetadataParser, KsefInvoiceMetadataParser>();

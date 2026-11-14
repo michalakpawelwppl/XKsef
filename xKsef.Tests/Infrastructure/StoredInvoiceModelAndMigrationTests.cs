@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -88,29 +88,47 @@ public sealed class StoredInvoiceModelAndMigrationTests
     }
 
     [Fact]
-    public void UpAddsExactlySixNullableColumnsWithoutDefaultsOrOtherOperations()
+    public void InitialCreatesAllTablesAndNullableInvoiceFieldsWithoutHistoricalDefaults()
     {
-        var migration = new AddInvoiceBuyerAmountsAndInvoicingDate();
-        AssertAddedColumns(migration.UpOperations);
+        var migration = new InitialCreate();
+        var tables = migration.UpOperations.OfType<CreateTableOperation>().ToArray();
+        Assert.Equal(13, tables.Length);
+        var invoice = Assert.Single(tables, table => table.Name == "invoices");
+        AssertAddedColumns(invoice.Columns.Where(column => NewColumns.Contains(column.Name)).Cast<MigrationOperation>().ToArray());
+        Assert.All(invoice.Columns, column => Assert.Null(column.DefaultValue));
+        Assert.All(migration.UpOperations, operation => Assert.True(operation is CreateTableOperation or CreateIndexOperation));
+        Assert.Empty(Assert.Single(tables, table => table.Name == "TaxEntities").CheckConstraints);
+        var membership = Assert.Single(tables, table => table.Name == "UserTenants");
+        Assert.True(Assert.Single(membership.Columns, column => column.Name == "PreferredKsefCredentialId").IsNullable);
+        Assert.Equal(new[] { "UserId", "TenantId" }, membership.PrimaryKey!.Columns);
+        Assert.Single(invoice.ForeignKeys, foreignKey => foreignKey.PrincipalTable == "Tenants" && foreignKey.OnDelete == ReferentialAction.Restrict);
+        Assert.Contains(migration.UpOperations.OfType<CreateIndexOperation>(), index => index.Table == "invoices" && index.IsUnique && index.Columns.SequenceEqual(new[] { "TenantId", "KsefNumber" }));
     }
 
     [Fact]
-    public void DownDropsOnlyTheSixAddedColumns()
+    public void InitialDownDropsAllTablesBeforeTheirReferencedParents()
     {
-        var migration = new AddInvoiceBuyerAmountsAndInvoicingDate();
-        AssertDroppedColumns(migration.DownOperations);
+        var migration = new InitialCreate();
+        var dropped = migration.DownOperations.Select(operation => Assert.IsType<DropTableOperation>(operation).Name).ToArray();
+        var tables = migration.UpOperations.OfType<CreateTableOperation>().ToArray();
+        Assert.Equal(tables.Select(table => table.Name).OrderBy(name => name), dropped.OrderBy(name => name));
+        foreach (var table in tables)
+            foreach (var foreignKey in table.ForeignKeys)
+                Assert.True(Array.IndexOf(dropped, table.Name) < Array.IndexOf(dropped, foreignKey.PrincipalTable));
     }
 
     [Fact]
-    public void FullModelDifferenceFromPreviousMigrationContainsOnlyTheSixNewColumns()
+    public void InitialCreatesTheCompleteModelAndEmailIndexHasItsOwnMigration()
     {
         using var context = CreateContext();
-        var previous = InitializeModel(context, new AddPreferredKsefCredentialId().TargetModel);
+        var migrations = context.GetService<IMigrationsAssembly>().Migrations.Keys.OrderBy(id => id).ToArray();
+        Assert.Equal(3, migrations.Length);
+        Assert.EndsWith("_InitialCreate", migrations[0]);
+        Assert.EndsWith("_AddUniqueNormalizedEmail", migrations[1]);
         var current = context.GetService<IDesignTimeModel>().Model;
-        var differ = context.GetService<IMigrationsModelDiffer>();
-
-        AssertAddedColumns(differ.GetDifferences(previous.GetRelationalModel(), current.GetRelationalModel()));
-        AssertDroppedColumns(differ.GetDifferences(current.GetRelationalModel(), previous.GetRelationalModel()));
+        var operations = context.GetService<IMigrationsModelDiffer>().GetDifferences(null, current.GetRelationalModel());
+        Assert.Equal(14, operations.OfType<CreateTableOperation>().Count());
+        Assert.All(operations, operation => Assert.True(operation is CreateTableOperation or CreateIndexOperation));
     }
 
     [Fact]
@@ -118,28 +136,27 @@ public sealed class StoredInvoiceModelAndMigrationTests
     {
         using var context = CreateContext();
         var current = context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
-        var target = InitializeModel(context, new AddInvoiceBuyerAmountsAndInvoicingDate().TargetModel);
+        var target = InitializeModel(context, new AddBrowserSessions().TargetModel);
         var snapshot = InitializeModel(context, new AppDbContextModelSnapshot().Model);
         var differ = context.GetService<IMigrationsModelDiffer>();
 
         Assert.Empty(differ.GetDifferences(target.GetRelationalModel(), current));
         Assert.Empty(differ.GetDifferences(snapshot.GetRelationalModel(), current));
+        Assert.False(context.Database.HasPendingModelChanges());
     }
 
     [Fact]
-    public void GeneratedSqlOnlyAddsTheSixNullableColumns()
+    public void InitialSqlCreatesTheSchemaWithoutHistoricalDataUpdatesOrSeed()
     {
         using var context = CreateContext();
-        var migration = new AddInvoiceBuyerAmountsAndInvoicingDate();
+        var migration = new InitialCreate();
         var commands = context.GetService<IMigrationsSqlGenerator>().Generate(migration.UpOperations, InitializeModel(context, migration.TargetModel));
-
-        Assert.Equal(6, commands.Count);
-        foreach (var command in commands)
-        {
-            Assert.StartsWith("ALTER TABLE [invoices] ADD [", command.CommandText);
-            Assert.Contains(" NULL;", command.CommandText);
-            Assert.DoesNotContain("DEFAULT", command.CommandText, StringComparison.OrdinalIgnoreCase);
-        }
+        string sql = string.Join(Environment.NewLine, commands.Select(command => command.CommandText));
+        Assert.Equal(13, System.Text.RegularExpressions.Regex.Matches(sql, @"CREATE TABLE \[").Count);
+        Assert.DoesNotMatch(@"(?im)^\s*(UPDATE|INSERT|DELETE|TRUNCATE|ALTER|DROP|EXEC)\b", sql);
+        Assert.DoesNotContain("991223a5-3173-4c96-a8af-b515065eec49", sql);
+        Assert.DoesNotContain("Firma testowa", sql);
+        Assert.Equal(System.Data.ConnectionState.Closed, context.Database.GetDbConnection().State);
     }
 
     private static void AssertAddedColumns(IReadOnlyList<MigrationOperation> operations)
@@ -178,13 +195,6 @@ public sealed class StoredInvoiceModelAndMigrationTests
         }
     }
 
-    private static void AssertDroppedColumns(IReadOnlyList<MigrationOperation> operations)
-    {
-        Assert.Equal(6, operations.Count);
-        var columns = operations.Select(operation => Assert.IsType<DropColumnOperation>(operation)).ToArray();
-        Assert.Equal(NewColumns, columns.Select(column => column.Name).OrderBy(name => name, StringComparer.Ordinal));
-        Assert.All(columns, column => Assert.Equal("invoices", column.Table));
-    }
 
     private static IEntityType GetInvoice(AppDbContext context) => context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(StoredInvoice))!;
 

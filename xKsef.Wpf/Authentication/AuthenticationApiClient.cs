@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using xKsef.Contracts.Authentication;
@@ -37,13 +37,14 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
     public async Task AuthenticateKsefTokenAsync(ApiRequestContext context, Guid credentialId)
     {
         using var request = CreateRequest(HttpMethod.Post, "api/ksef/authentication/authenticate-token", context, ApiRequestScope.TenantHeader);
+        request.Content = JsonContent.Create(new { CredentialId = credentialId });
         using HttpResponseMessage response = await _httpClient.SendAsync(request, context.CancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
     public async Task<Guid> SaveKsefCertificateAsync(ApiRequestContext context, string certificatePem, string encryptedPrivateKeyPem, string password)
     {
-        using var request = CreateRequest(HttpMethod.Post, "api/ksef/authentication/certificate", context, ApiRequestScope.TenantHeader);
+        using var request = CreateRequest(HttpMethod.Post, "api/ksef/authentication/certificate", context, ApiRequestScope.User);
         request.Content = JsonContent.Create(new
         {
             CertificatePem = certificatePem,
@@ -64,12 +65,44 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
     public async Task AuthenticateKsefCertificateAsync(ApiRequestContext context, Guid credentialId)
     {
         using var request = CreateRequest(HttpMethod.Post, "api/ksef/authentication/authenticate-certificate", context, ApiRequestScope.TenantHeader);
+        request.Content = JsonContent.Create(new { CredentialId = credentialId });
         using HttpResponseMessage response = await _httpClient.SendAsync(request, context.CancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
     private sealed record CreateUserResponse(string UserId);
     private sealed record UserValidationProblem(Dictionary<string, string[]>? Errors);
+
+    public async Task<UserCreationResult> RegisterAsync(ApiRequestContext context, string login, string email, string password)
+    {
+        using var request = CreateRequest(HttpMethod.Post, "api/auth/register", context, ApiRequestScope.Anonymous);
+        request.Content = JsonContent.Create(new RegisterRequest { Login = login, Email = email, Password = password });
+        using var response = await _httpClient.SendAsync(request, context.CancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.Created)
+        {
+            var result = await response.Content.ReadFromJsonAsync<RegisterResponse>(cancellationToken: context.CancellationToken);
+            if (result is null || string.IsNullOrWhiteSpace(result.UserId))
+                throw new InvalidOperationException("API nie zwróciło identyfikatora użytkownika.");
+            return new UserCreationResult(response.StatusCode, result.UserId, Array.Empty<string>());
+        }
+
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            var problem = await response.Content.ReadFromJsonAsync<UserValidationProblem>(cancellationToken: context.CancellationToken);
+            string[] errors = problem?.Errors?.SelectMany(pair => pair.Key switch
+            {
+                "Login" => new[] { "InvalidUserName" },
+                "Email" => new[] { "InvalidEmail" },
+                "Password" => new[] { "PasswordRequired" },
+                "Identity" => pair.Value,
+                _ => new[] { "InvalidData" }
+            }).Distinct().ToArray() ?? Array.Empty<string>();
+            return new UserCreationResult(response.StatusCode, null, errors);
+        }
+
+        return new UserCreationResult(response.StatusCode, null, Array.Empty<string>());
+    }
 
     public async Task<UserCreationResult> CreateUserAsync(ApiRequestContext context, string login, string email, string password)
     {

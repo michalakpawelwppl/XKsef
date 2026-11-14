@@ -4,6 +4,7 @@ using xKsef.Domain.Invoices;
 using xKsef.Domain.Ksef.Authentication;
 using xKsef.Domain.Tenants;
 using xKsef.Infrastructure.Identity;
+using xKsef.Infrastructure.Authentication;
 
 namespace xKsef.Infrastructure.Persistence;
 
@@ -12,6 +13,8 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser>
     public AppDbContext(DbContextOptions<AppDbContext> options): base(options)
     {
     }
+
+    public DbSet<BrowserSession> BrowserSessions => Set<BrowserSession>();
 
     public DbSet<StoredInvoice> Invoices => Set<StoredInvoice>();
     public DbSet<Tenant> Tenants => Set<Tenant>();

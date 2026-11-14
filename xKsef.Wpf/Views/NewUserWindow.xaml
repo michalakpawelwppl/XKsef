@@ -10,14 +10,15 @@
             <TextBlock Text="E-mail" Margin="0,0,0,4"/>
             <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" MaxLength="256" Margin="0,0,0,12"/>
             <TextBlock Text="Hasło" Margin="0,0,0,4"/>
-            <PasswordBox x:Name="PasswordInput" behaviors:PasswordBoxHelper.BoundPassword="{Binding Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"/>
+            <PasswordBox MaxLength="256" x:Name="PasswordInput" behaviors:PasswordBoxHelper.BoundPassword="{Binding Password, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"/>
+            <TextBlock Text="Minimum 12 znaków: mała i wielka litera, cyfra oraz znak specjalny." TextWrapping="Wrap" Margin="0,0,0,12"/>
             <TextBlock Text="Powtórz hasło" Margin="0,0,0,4"/>
-            <PasswordBox x:Name="ConfirmPasswordInput" behaviors:PasswordBoxHelper.BoundPassword="{Binding ConfirmPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"/>
+            <PasswordBox MaxLength="256" x:Name="ConfirmPasswordInput" behaviors:PasswordBoxHelper.BoundPassword="{Binding ConfirmPassword, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12"/>
         </StackPanel>
         <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" TextWrapping="Wrap" Margin="0,0,0,12"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="Anuluj" Command="{Binding CancelCommand}" IsCancel="True" Width="90" Margin="0,0,10,0"/>
-            <Button Content="Zapisz" Command="{Binding SaveCommand}" IsDefault="True" Width="90"/>
+            <Button Content="Zarejestruj" Command="{Binding SaveCommand}" IsDefault="True" Width="90"/>
         </StackPanel>
     </StackPanel>
 </Window>

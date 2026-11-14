@@ -37,6 +37,7 @@ public partial class MainViewModel : ObservableObject
     private bool _isCleanedUp;
     private bool _isClearingContextDependentState;
     private long _certificateSaveOperationId;
+    private long _tenantCreationOperationId;
     private CancellationTokenSource? _invoicePdfCancellationTokenSource;
     private long _invoicePdfRequestId;
     private readonly record struct InvoiceFilterSnapshot(DateOnly From, DateOnly To, InvoiceDateKind DateKind, string? TimeZoneId);
@@ -51,6 +52,18 @@ public partial class MainViewModel : ObservableObject
 
     private string? _currentTemporaryPdfPath;
     [ObservableProperty]
+    private int _selectedAccountAction = -1;
+
+    partial void OnSelectedAccountActionChanged(int value)
+    {
+        if (value < 0) return;
+        SelectedAccountAction = -1;
+        if (IsLoggedIn) return;
+        if (value == 0) Login();
+        else if (value == 1) NewUser();
+    }
+
+    [ObservableProperty]
     private DateTime _dateFrom = DateTime.Today.AddDays(-30);
 
     [ObservableProperty]
@@ -64,7 +77,7 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private int selectedTabIndex = 0;
-    [ObservableProperty]
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanManageTenantUsers)), NotifyCanExecuteChangedFor(nameof(ManageTenantUsersCommand))]
     private bool isLoggedIn;
 
     [ObservableProperty]
@@ -103,7 +116,7 @@ public partial class MainViewModel : ObservableObject
     private KsefCredentialOption? _selectedKsefCredential;
 
 
-    [ObservableProperty]
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanManageTenantUsers)), NotifyCanExecuteChangedFor(nameof(ManageTenantUsersCommand))]
     private TenantDto? selectedTenant;
 
     [ObservableProperty]
@@ -111,7 +124,7 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private Guid? _ksefCredentialId;
-   
+
     [ObservableProperty]
     private bool _hasKsefCertificate;
 
@@ -141,6 +154,7 @@ public partial class MainViewModel : ObservableObject
 
     private void OnTenantChanged(object? sender, EventArgs e)
     {
+        if (SelectedTenant != _tenantContext.CurrentTenant) SelectedTenant = _tenantContext.CurrentTenant;
         if (!AdvanceContextGeneration(_tenantContext.TenantId, tenantChanged: true, out long eventGeneration)) return;
 
         System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
@@ -149,7 +163,13 @@ public partial class MainViewModel : ObservableObject
 
             ClearContextDependentState();
 
-            if (!IsLoggedIn || !_tenantContext.HasTenant) return;
+            if (!IsLoggedIn) return;
+            if (!_tenantContext.HasTenant)
+            {
+                var own = CaptureContext(ApiRequestScope.User);
+                if (own is ApiRequestContext userContext) { await CheckKsefCertificateAsync(userContext); if (IsCurrentContext(userContext)) RefreshKsefCredentials(); }
+                return;
+            }
 
             var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
             if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
@@ -195,12 +215,12 @@ public partial class MainViewModel : ObservableObject
     {
         if (!IsCurrentContext(context)) return;
 
-        if (context.TenantId is null || string.IsNullOrWhiteSpace(context.AccessToken)) return;
+        if (string.IsNullOrWhiteSpace(context.AccessToken)) return;
 
         long operationId = ++_certificateListOperationId;
         try
         {
-            var certificates = await _ksefCredentialsApiClient.GetCertificatesAsync(context);
+            var certificates = await _ksefCredentialsApiClient.GetCertificatesAsync(context with { Scope = ApiRequestScope.User, TenantId = null });
             if (operationId != _certificateListOperationId) return;
             if (!IsCurrentContext(context)) return;
 
@@ -241,7 +261,7 @@ public partial class MainViewModel : ObservableObject
 
             Status = $"Wybrano podmiot: {SelectedTenant.Name}";
 
-     
+
         }
         catch (Exception ex)
         {
@@ -428,47 +448,77 @@ public partial class MainViewModel : ObservableObject
     private async Task NewTenantAsync()
     {
         if (!IsLoggedIn) return;
-        TenantCreationDialogResult? result = _navigationService.ShowNewTenantWindow();
-        if (result is null) return;
-
-        bool IsSessionCurrent() => !_isCleanedUp && _tokenStore.SessionVersion == result.SessionVersion;
-        if (!IsSessionCurrent()) return;
         var snapshot = CaptureContext(ApiRequestScope.User);
-        if (snapshot is not ApiRequestContext context || context.SessionVersion != result.SessionVersion || string.IsNullOrWhiteSpace(context.AccessToken)) return;
-        var userContext = context with { TenantId = null };
-
+        if (snapshot is not ApiRequestContext context || !IsCurrentContext(context) || string.IsNullOrWhiteSpace(context.AccessToken)) return;
+        long operationId = ++_tenantCreationOperationId;
+        bool IsCurrent() => operationId == _tenantCreationOperationId && IsCurrentContext(context) && _tokenStore.SessionVersion == context.SessionVersion;
+        TenantCreationDialogResult? result = _navigationService.ShowNewTenantWindow();
+        if (result is null || result.SessionVersion != context.SessionVersion || !IsCurrent()) return;
         try
         {
-            IReadOnlyList<TenantDto> tenants = await _tenantApiClient.GetMyTenantsAsync(userContext);
-            context.CancellationToken.ThrowIfCancellationRequested();
-            if (!IsSessionCurrent()) return;
-            TenantDto? createdTenant = tenants.FirstOrDefault(x => x.Id == result.TenantId);
-            if (createdTenant is not null)
+            IReadOnlyList<TenantDto> tenants = await _tenantApiClient.GetMyTenantsAsync(context with { TenantId = null });
+            if (!IsCurrent()) return;
+            TenantDto? createdTenant = tenants.FirstOrDefault(tenant => tenant.Id == result.TenantId);
+            if (createdTenant is null) throw new InvalidOperationException("Created tenant is missing from the refreshed list.");
+            // Add before selecting: clearing ItemsSource would clear the old selection and change the context.
+            foreach (TenantDto tenant in tenants)
             {
-                if (!IsSessionCurrent()) return;
-                AvailableTenants.Clear();
-                foreach (TenantDto tenant in tenants)
-                {
-                    if (!IsSessionCurrent()) return;
-                    AvailableTenants.Add(tenant);
-                }
-                if (!IsSessionCurrent()) return;
-                SelectedTenant = createdTenant;
+                if (!IsCurrent()) return;
+                if (!AvailableTenants.Any(existing => existing.Id == tenant.Id)) AvailableTenants.Add(tenant);
             }
-            if (IsSessionCurrent()) Status = "Tenant został utworzony.";
+            if (!IsCurrent()) return;
+            SelectedTenant = AvailableTenants.First(tenant => tenant.Id == createdTenant.Id);
+            var selectedSnapshot = CaptureContext(ApiRequestScope.User);
+            if (selectedSnapshot is not ApiRequestContext selected || selected.TenantId != createdTenant.Id || selected.SessionVersion != context.SessionVersion) return;
+            bool IsSelectionCurrent() => operationId == _tenantCreationOperationId && IsCurrentContext(selected) && _tokenStore.SessionVersion == selected.SessionVersion;
+            // Reconcile the other entries only after moving the selection to the new tenant.
+            for (int index = AvailableTenants.Count - 1; index >= 0; index--)
+            {
+                if (!IsSelectionCurrent()) return;
+                TenantDto? refreshed = tenants.FirstOrDefault(tenant => tenant.Id == AvailableTenants[index].Id);
+                if (refreshed is null) AvailableTenants.RemoveAt(index);
+                else if (refreshed.Id != createdTenant.Id) AvailableTenants[index] = refreshed;
+            }
+            if (IsSelectionCurrent()) Status = "Tenant został utworzony.";
         }
         catch (Exception)
         {
-            if (IsSessionCurrent())
-                Status = "Tenant został utworzony, ale nie udało się odświeżyć listy tenantów.";
+            if (IsCurrent()) Status = "Tenant został utworzony, ale nie udało się odświeżyć listy tenantów.";
         }
     }
 
+    public bool CanManageTenantUsers => IsLoggedIn && SelectedTenant?.Role == TenantRoles.Admin;
+
+    [RelayCommand(CanExecute = nameof(CanManageTenantUsers))]
+    private void ManageTenantUsers()
+    {
+        if (!CanManageTenantUsers || CaptureContext(ApiRequestScope.TenantRoute) is not ApiRequestContext context) return;
+        _navigationService.ShowTenantUsersWindow(role =>
+        {
+            if (!IsCurrentContext(context) || _tokenStore.SessionVersion != context.SessionVersion) return;
+            TenantDto? updated = role is null ? null : SelectedTenant! with { Role = role };
+            if (updated == SelectedTenant) return;
+            if (updated is not null && !AvailableTenants.Contains(updated)) AvailableTenants.Add(updated);
+            if (!IsCurrentContext(context) || _tokenStore.SessionVersion != context.SessionVersion) return;
+            SelectedTenant = updated;
+            var afterChange = CaptureContext(ApiRequestScope.User);
+            if (afterChange is not ApiRequestContext after || after.TenantId != updated?.Id || after.SessionVersion != context.SessionVersion) return;
+            foreach (var previous in AvailableTenants.Where(tenant => tenant.Id == context.TenantId && tenant != updated).ToArray())
+            {
+                if (!IsCurrentContext(after) || _tokenStore.SessionVersion != after.SessionVersion) return;
+                AvailableTenants.Remove(previous);
+            }
+            if (IsCurrentContext(after) && _tokenStore.SessionVersion == after.SessionVersion)
+                Status = updated is null ? "Dostęp do tenanta został odebrany. Wybierz dostępny podmiot." : "Twoje uprawnienia do tenanta zostały zmienione.";
+        });
+    }
     [RelayCommand]
     private void NewUser()
     {
-        if (!IsLoggedIn) return;
-        _navigationService.ShowNewUserWindow();
+        if (IsLoggedIn) return;
+        long sessionVersion = _tokenStore.SessionVersion;
+        if (_navigationService.ShowNewUserWindow() == true && _tokenStore.SessionVersion == sessionVersion && string.IsNullOrWhiteSpace(_tokenStore.AccessToken))
+            Login();
     }
 
     [RelayCommand]
@@ -591,7 +641,10 @@ public partial class MainViewModel : ObservableObject
             if (!OwnsInvoiceLoading(context, operationId)) return;
             bool refreshed = await RefreshInvoicesAsync(context, direction, operationId);
             if (!OwnsInvoiceLoading(context, operationId)) return;
-            Status = refreshed
+            bool emptyExport = imported.DeclaredInvoiceCount == 0 && imported.ReadInvoiceCount == 0 && imported.ImportedCount == 0 && imported.SkippedCount == 0;
+            Status = refreshed && emptyExport
+                ? "Nie znaleziono nowych faktur w wybranym okresie"
+                : refreshed
                 ? $"Import zakończony. Zaimportowano: {imported.ImportedCount}, pominięto: {imported.SkippedCount}. Faktur na liście: {(direction == InvoiceDirection.Sales ? SalesInvoices.Count : PurchaseInvoices.Count)}."
                 : "Import zakończony poprawnie. Filtr zmienił się podczas odświeżania. Pobierz faktury ponownie.";
         }
@@ -961,7 +1014,11 @@ public partial class MainViewModel : ObservableObject
             _tenantContext.SetTenant(null);
 
             if (IsLoggedIn)
+            {
                 await LoadTenantsAsync();
+                var own = CaptureContext(ApiRequestScope.User);
+                if (own is ApiRequestContext context && context.TenantId is null && IsCurrentContext(context)) { await CheckKsefCertificateAsync(context); if (IsCurrentContext(context)) RefreshKsefCredentials(); }
+            }
         });
     }
 
@@ -1110,14 +1167,14 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task ConfigureKsefCertificateAsync()
     {
-        if (!IsLoggedIn || !_tenantContext.HasTenant)
+        if (!IsLoggedIn)
         {
-            Status = "Najpierw zaloguj się i wybierz firmę.";
+            Status = "Najpierw zaloguj się.";
             return;
         }
 
-        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
-        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
+        var contextSnapshot = CaptureContext(ApiRequestScope.User);
+        if (contextSnapshot is not ApiRequestContext context || string.IsNullOrWhiteSpace(context.AccessToken)) return;
         long operationId = Interlocked.Increment(ref _certificateSaveOperationId);
 
         var files = _certificateSelectionWindowService.SelectCertificate();

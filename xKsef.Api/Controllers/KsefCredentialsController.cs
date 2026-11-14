@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using xKsef.Api.Authorization;
@@ -10,7 +10,6 @@ namespace xKsef.Api.Controllers;
 
 [ApiController]
 [Authorize]
-[ServiceFilter(typeof(CredentialManagementAuthorizationFilter))]
 [Route("api/ksef/credentials")]
 public sealed class KsefCredentialsController : ControllerBase
 {
@@ -25,6 +24,7 @@ public sealed class KsefCredentialsController : ControllerBase
     }
 
     [HttpPost("token")]
+    [ServiceFilter(typeof(CredentialManagementAuthorizationFilter))]
     public async Task<IActionResult> SaveTokenAsync([FromBody] SaveKsefTokenRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Token)) return BadRequest("Token KSeF nie może być pusty.");
@@ -45,6 +45,7 @@ public sealed class KsefCredentialsController : ControllerBase
     }
 
     [HttpGet("token")]
+    [ServiceFilter(typeof(CredentialManagementAuthorizationFilter))]
     public async Task<ActionResult<KsefTokenInfo>> GetTokenInfoAsync(CancellationToken cancellationToken)
     {
         string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -67,7 +68,7 @@ public sealed class KsefCredentialsController : ControllerBase
     {
         string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrWhiteSpace(userId)) return Unauthorized();
-        if (HttpContext.Items["TenantId"] is not Guid tenantId || tenantId == Guid.Empty) return Forbid();
+
         return Ok(await _credentialServiceClient.GetCertificatesAsync(userId, cancellationToken));
     }
     [HttpGet("certificate-info")]
@@ -75,8 +76,6 @@ public sealed class KsefCredentialsController : ControllerBase
     {
         string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrWhiteSpace(userId)) return Unauthorized();
-
-        if (HttpContext.Items["TenantId"] is not Guid tenantId || tenantId == Guid.Empty) return Forbid();
 
         KsefTokenInfo result = await _credentialServiceClient.GetCertificateInfoAsync(userId, cancellationToken);
 

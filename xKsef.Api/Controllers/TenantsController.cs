@@ -24,10 +24,12 @@ public sealed class TenantsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = ApplicationOperatorAuthorization.PolicyName)]
     public async Task<IActionResult> CreateAsync([FromBody] CreateTenantRequest request, CancellationToken cancellationToken)
     {
-        CreateTenantResult result = await _tenantService.CreateAsync(request.Name, request.Nip, request.TaxEntityName, request.UserLogin, cancellationToken);
+        string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId)) return Unauthorized();
+        CreateTenantResult result = await _tenantService.CreateAsync(request.Name, request.Nip, request.TaxEntityName, userId, cancellationToken);
+        if (result.Error == "UserNotFound") return Unauthorized();
         if (result.TenantId is Guid tenantId)
             return StatusCode(StatusCodes.Status201Created, new { TenantId = tenantId });
 
@@ -42,7 +44,7 @@ public sealed class TenantsController : ControllerBase
 
         return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
         {
-            ["UserLogin"] = new[] { "UserNotFound" }
+            ["Tenant"] = new[] { "InvalidData" }
         }));
     }
 

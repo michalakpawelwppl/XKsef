@@ -12,29 +12,26 @@ namespace xKsef.Tests.Wpf;
 public sealed class NewTenantTests
 {
     [Fact]
-    public void TargetLoginDefaultsToCurrentJwtLogin()
+    public async Task UserScopedCreationDoesNotRequireADecodedLogin()
     {
-        string payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(new { unique_name = "operator@example.com" })).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        using var vm = new NewTenantViewModel(new FakeTenantClient(), new TokenStore { AccessToken = "e30." + payload + ".signature" });
-        Assert.Equal("operator@example.com", vm.UserLogin);
+        var client = new FakeTenantClient();
+        using var vm = Form(client, new TokenStore { AccessToken = "opaque-token" });
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Equal(ApiRequestScope.User, Assert.Single(client.Contexts).Scope);
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("not-a-jwt")]
-    [InlineData("e30.invalid.signature")]
-    [InlineData("e30.W10.signature")]
-    [InlineData("e30.e30.signature")]
-    public void MissingOrMalformedJwtDoesNotInventLogin(string? token)
+    [Fact]
+    public async Task MissingJwtDisablesCreation()
     {
-        using var vm = new NewTenantViewModel(new FakeTenantClient(), new TokenStore { AccessToken = token });
-        Assert.Empty(vm.UserLogin);
+        var client = new FakeTenantClient();
+        using var vm = Form(client, new TokenStore());
+        Assert.False(vm.CanEdit);
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Empty(client.Contexts);
     }
-
     [Theory]
     [InlineData("Name", "")]
     [InlineData("TaxEntityName", " ")]
-    [InlineData("UserLogin", "")]
     [InlineData("Nip", "")]
     [InlineData("Nip", "123456789")]
     [InlineData("Nip", "12345678901")]
@@ -43,18 +40,16 @@ public sealed class NewTenantTests
     [InlineData("Nip", "1234567890\n")]
     [InlineData("Name", "too-long")]
     [InlineData("TaxEntityName", "too-long")]
-    [InlineData("UserLogin", "too-long")]
     public async Task InvalidFormDoesNotSendRequest(string field, string value)
     {
         var client = new FakeTenantClient();
         using var vm = Form(client, new TokenStore { AccessToken = "token-A" });
-        value = value == "too-long" ? new string('x', field == "UserLogin" ? 257 : 201) : value;
+        value = value == "too-long" ? new string('x', 201) : value;
         switch (field)
         {
             case "Name": vm.Name = value; break;
             case "Nip": vm.Nip = value; break;
             case "TaxEntityName": vm.TaxEntityName = value; break;
-            case "UserLogin": vm.UserLogin = value; break;
         }
         await vm.SaveCommand.ExecuteAsync(null);
         Assert.Empty(client.Contexts);
@@ -89,7 +84,7 @@ public sealed class NewTenantTests
     [Theory]
     [InlineData(HttpStatusCode.BadRequest, "Sprawdź")]
     [InlineData(HttpStatusCode.Unauthorized, "Zaloguj")]
-    [InlineData(HttpStatusCode.Forbidden, "operatora")]
+    [InlineData(HttpStatusCode.Forbidden, "dostępu")]
     [InlineData(HttpStatusCode.Conflict, "Konflikt")]
     [InlineData(HttpStatusCode.ServiceUnavailable, "Nie udało")]
     public async Task HttpErrorsAreReadableAndDoNotRetry(HttpStatusCode status, string text)
@@ -104,8 +99,6 @@ public sealed class NewTenantTests
     }
 
     [Theory]
-    [InlineData("UserNotFound", "nie istnieje")]
-    [InlineData("InvalidUserLogin", "login")]
     [InlineData("InvalidName", "nazwę tenanta")]
     [InlineData("InvalidTaxEntityName", "podmiotu")]
     [InlineData("InvalidNip", "10 cyfr")]
@@ -214,11 +207,11 @@ public sealed class NewTenantTests
             if (request.Method == HttpMethod.Post)
             {
                 using JsonDocument body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
-                Assert.Equal(4, body.RootElement.EnumerateObject().Count());
+                Assert.Equal(3, body.RootElement.EnumerateObject().Count());
                 Assert.Equal("New tenant", body.RootElement.GetProperty("name").GetString());
                 Assert.Equal("1234567890", body.RootElement.GetProperty("nip").GetString());
                 Assert.Equal("Tax entity", body.RootElement.GetProperty("taxEntityName").GetString());
-                Assert.Equal("target", body.RootElement.GetProperty("userLogin").GetString());
+                Assert.False(body.RootElement.TryGetProperty("userLogin", out _));
                 return Json(HttpStatusCode.Created, JsonSerializer.Serialize(new { tenantId }));
             }
             Assert.Equal(HttpMethod.Get, request.Method);
@@ -226,7 +219,7 @@ public sealed class NewTenantTests
         });
         using var http = Pipeline(tokens, tenants, transport);
         var client = new TenantApiClient(http);
-        Assert.Equal(tenantId, (await client.CreateTenantAsync(context, "New tenant", "1234567890", "Tax entity", "target")).TenantId);
+        Assert.Equal(tenantId, (await client.CreateTenantAsync(context, "New tenant", "1234567890", "Tax entity")).TenantId);
         Assert.Equal(tenantId, Assert.Single(await client.GetMyTenantsAsync(context)).Id);
         Assert.Equal("token-B", tokens.AccessToken);
         Assert.Equal(2, transport.Count);
@@ -241,7 +234,7 @@ public sealed class NewTenantTests
         var tokens = new TokenStore { AccessToken = "token-A" };
         using var transport = new Transport((_, _) => Task.FromResult(Json(status, "{}")));
         using var http = Pipeline(tokens, new TenantContext(), transport);
-        var result = await new TenantApiClient(http).CreateTenantAsync(Context(tokens), "name", "1234567890", "tax", "user");
+        var result = await new TenantApiClient(http).CreateTenantAsync(Context(tokens), "name", "1234567890", "tax");
         Assert.Equal(status, result.StatusCode);
         Assert.Null(result.TenantId);
         Assert.Equal(1, transport.Count);
@@ -254,8 +247,8 @@ public sealed class NewTenantTests
         using var transport = new Transport((_, _) => Task.FromResult(Json(HttpStatusCode.BadRequest,
             "{\"errors\":{\"UserLogin\":[\"UserNotFound\"],\"Nip\":[\"raw-server-text\"]}}")));
         using var http = Pipeline(tokens, new TenantContext(), transport);
-        var result = await new TenantApiClient(http).CreateTenantAsync(Context(tokens), "name", "1234567890", "tax", "user");
-        Assert.Equal(new[] { "UserNotFound", "InvalidNip" }, result.Errors);
+        var result = await new TenantApiClient(http).CreateTenantAsync(Context(tokens), "name", "1234567890", "tax");
+        Assert.Equal(new[] { "InvalidData", "InvalidNip" }, result.Errors);
     }
 
     [Theory]
@@ -267,7 +260,7 @@ public sealed class NewTenantTests
         using var transport = new Transport((_, _) => Task.FromResult(Json(HttpStatusCode.Created, body)));
         using var http = Pipeline(tokens, new TenantContext(), transport);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new TenantApiClient(http).CreateTenantAsync(Context(tokens), "name", "1234567890", "tax", "user"));
+            new TenantApiClient(http).CreateTenantAsync(Context(tokens), "name", "1234567890", "tax"));
         Assert.Equal(1, transport.Count);
     }
 
@@ -280,20 +273,20 @@ public sealed class NewTenantTests
         var client = new TenantApiClient(http);
         foreach (ApiRequestContext context in new[] { Context(tokens) with { AccessToken = null }, Context(tokens) with { Scope = ApiRequestScope.TenantHeader } })
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(() => client.CreateTenantAsync(context, "name", "1234567890", "tax", "user"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => client.CreateTenantAsync(context, "name", "1234567890", "tax"));
             await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetMyTenantsAsync(context));
         }
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         ApiRequestContext cancelled = Context(tokens) with { CancellationToken = cancellation.Token };
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.CreateTenantAsync(cancelled, "name", "1234567890", "tax", "user"));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.CreateTenantAsync(cancelled, "name", "1234567890", "tax"));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetMyTenantsAsync(cancelled));
         Assert.Equal(0, transport.Count);
     }
 
     private static NewTenantViewModel Form(ITenantApiClient client, ITokenStore tokens) => new(client, tokens)
     {
-        Name = "New tenant", Nip = "1234567890", TaxEntityName = "Tax entity", UserLogin = "target"
+        Name = "New tenant", Nip = "1234567890", TaxEntityName = "Tax entity"
     };
     private static TaskCompletionSource<TenantCreationResult> Completion() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static ApiRequestContext Context(ITokenStore tokens) => new(1, tokens.SessionVersion, null, tokens.AccessToken, CancellationToken.None, ApiRequestScope.User);
@@ -318,7 +311,7 @@ public sealed class NewTenantTests
         public Guid TenantId { get; } = Guid.NewGuid();
         public List<ApiRequestContext> Contexts { get; } = [];
         public Func<ApiRequestContext, Task<TenantCreationResult>>? Handler { get; set; }
-        public Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName, string userLogin)
+        public Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName)
         {
             Contexts.Add(context);
             return Handler?.Invoke(context) ?? Task.FromResult(new TenantCreationResult(HttpStatusCode.Created, TenantId, []));

@@ -209,35 +209,24 @@ public sealed class KsefSourceCredentialTests
     }
 
     [Fact]
-    public void MigrationOnlyRebuildsSourcesAndDoesNotMigrateDataOrAssignSyntheticTenant()
+    public void InitialCreatesSourcesWithoutHistoricalSessionsOrSyntheticTenant()
     {
         using var context = new CredentialsDbContextFactory().CreateDbContext([]);
-        var migration = new RebuildKsefSourceCredentials();
-        Assert.Equal(15, migration.UpOperations.Count);
-        Assert.Equal(15, migration.DownOperations.Count);
-        Assert.All(migration.UpOperations.Concat(migration.DownOperations), operation =>
-        {
-            string? table = operation switch
-            {
-                DropIndexOperation o => o.Table, CreateIndexOperation o => o.Table,
-                DropColumnOperation o => o.Table, AddColumnOperation o => o.Table,
-                AlterColumnOperation o => o.Table,
-                AddCheckConstraintOperation o => o.Table, DropCheckConstraintOperation o => o.Table,
-                _ => throw new InvalidOperationException(operation.GetType().Name)
-            };
-            Assert.Equal("KsefCredentials", table);
-        });
-        Assert.Equal(new[] { "SourceCredentialId", "ValidUntil" }, migration.UpOperations.OfType<DropColumnOperation>().Select(o => o.Name));
-        var tenant = Assert.Single(migration.UpOperations.OfType<AlterColumnOperation>(), o => o.Name == "TenantId");
+        var migration = new InitialCreate();
+        var source = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>(), table => table.Name == "KsefCredentials");
+        Assert.DoesNotContain(source.Columns, column => column.Name is "SourceCredentialId" or "ValidUntil");
+        var tenant = Assert.Single(source.Columns, column => column.Name == "TenantId");
         Assert.True(tenant.IsNullable);
         Assert.Null(tenant.DefaultValue);
-        Assert.Null(Assert.Single(migration.DownOperations.OfType<AlterColumnOperation>(), o => o.Name == "TenantId").DefaultValue);
+        var check = Assert.Single(source.CheckConstraints, check => check.Name == "CK_KsefCredentials_SourceContext");
+        Assert.Contains("N'Certificate' AND [TenantId] IS NULL AND [ContextNip] IS NULL", check.Sql);
+        Assert.Contains("N'Token' AND [TenantId] IS NOT NULL", check.Sql);
         var model = context.GetService<IModelRuntimeInitializer>().Initialize(migration.TargetModel, designTime: true);
         foreach (var operations in new[] { migration.UpOperations, migration.DownOperations })
         {
-            string sql = string.Join(Environment.NewLine, context.GetService<IMigrationsSqlGenerator>().Generate(operations, model).Select(c => c.CommandText));
+            string sql = string.Join(Environment.NewLine, context.GetService<IMigrationsSqlGenerator>().Generate(operations, model).Select(command => command.CommandText));
             Assert.DoesNotMatch(@"(?im)^\s*(UPDATE|INSERT|DELETE|TRUNCATE)\b", sql);
-            Assert.DoesNotContain("KsefSessions", sql);
+            Assert.DoesNotContain("ALTER COLUMN", sql);
         }
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Equal(ConnectionState.Closed, context.Database.GetDbConnection().State);

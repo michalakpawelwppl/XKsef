@@ -20,10 +20,10 @@ public sealed class TenantApiClient : ITenantApiClient
     private sealed record CreateTenantResponse(Guid TenantId);
     private sealed record TenantValidationProblem(Dictionary<string, string[]>? Errors);
 
-    public async Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName, string userLogin)
+    public async Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName)
     {
         using var request = CreateUserScopedRequest(HttpMethod.Post, context);
-        request.Content = JsonContent.Create(new { Name = name, Nip = nip, TaxEntityName = taxEntityName, UserLogin = userLogin });
+        request.Content = JsonContent.Create(new { Name = name, Nip = nip, TaxEntityName = taxEntityName });
         using var response = await _httpClient.SendAsync(request, context.CancellationToken);
         if (response.StatusCode == HttpStatusCode.Created)
         {
@@ -40,7 +40,6 @@ public sealed class TenantApiClient : ITenantApiClient
                 "Name" => "InvalidName",
                 "Nip" => "InvalidNip",
                 "TaxEntityName" => "InvalidTaxEntityName",
-                "UserLogin" => pair.Value.Contains("UserNotFound") ? "UserNotFound" : "InvalidUserLogin",
                 _ => "InvalidData"
             }).Distinct().ToArray() ?? Array.Empty<string>();
             return new TenantCreationResult(response.StatusCode, null, errors);

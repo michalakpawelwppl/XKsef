@@ -24,6 +24,7 @@ using xKsef.Infrastructure.Persistence;
 
 namespace xKsef.Tests.Integration;
 
+[Collection(LocalDbIntegrationCollection.Name)]
 public sealed class UserCreationTests
 {
     [Fact]

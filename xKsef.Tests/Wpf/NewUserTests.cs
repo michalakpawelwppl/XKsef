@@ -38,14 +38,16 @@ public sealed class NewUserTests
     }
 
     [Fact]
-    public async Task NoSessionDisablesSaveWithoutRequiringTenant()
+    public async Task NoSessionAllowsRegistrationWithoutRequiringTenant()
     {
         var client = new FakeAuthenticationClient();
         using var vm = ValidForm(client, new TokenStore());
-        Assert.False(vm.SaveCommand.CanExecute(null));
+        Assert.True(vm.SaveCommand.CanExecute(null));
         await vm.SaveCommand.ExecuteAsync(null);
-        Assert.Empty(client.Contexts);
-        Assert.NotEmpty(vm.ErrorMessage);
+        var context = Assert.Single(client.Contexts);
+        Assert.Equal(ApiRequestScope.Anonymous, context.Scope);
+        Assert.Null(context.AccessToken);
+        Assert.Null(context.TenantId);
     }
 
     [Fact]
@@ -65,8 +67,8 @@ public sealed class NewUserTests
 
         Assert.True(closed);
         ApiRequestContext context = Assert.Single(client.Contexts);
-        Assert.Equal(ApiRequestScope.User, context.Scope);
-        Assert.Equal("token-A", context.AccessToken);
+        Assert.Equal(ApiRequestScope.Anonymous, context.Scope);
+        Assert.Null(context.AccessToken);
         Assert.Equal(sessionVersion, context.SessionVersion);
         Assert.Null(context.TenantId);
         Assert.Equal("token-A", tokenStore.AccessToken);
@@ -80,6 +82,7 @@ public sealed class NewUserTests
     [Theory]
     [InlineData("DuplicateUserName", "loginie")]
     [InlineData("DuplicateEmail", "e-mail")]
+    [InlineData("DuplicateAccount", "Login lub")]
     [InlineData("InvalidUserName", "login")]
     [InlineData("InvalidEmail", "e-mail")]
     [InlineData("PasswordTooShort", "krótkie")]
@@ -106,8 +109,9 @@ public sealed class NewUserTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.Unauthorized, "Zaloguj")]
-    [InlineData(HttpStatusCode.Forbidden, "operatora")]
+    [InlineData(HttpStatusCode.Unauthorized, "niedostępna")]
+    [InlineData(HttpStatusCode.TooManyRequests, "Zbyt wiele")]
+    [InlineData(HttpStatusCode.Forbidden, "niedostępna")]
     [InlineData(HttpStatusCode.ServiceUnavailable, "Nie udało")]
     public async Task HttpErrorsAreReportedWithoutRetry(HttpStatusCode status, string message)
     {
@@ -150,7 +154,7 @@ public sealed class NewUserTests
         var newResponse = Completion();
         var client = new FakeAuthenticationClient
         {
-            Handler = context => context.AccessToken == "token-A" ? oldResponse.Task : newResponse.Task
+            Handler = context => context.SessionVersion == 1 ? oldResponse.Task : newResponse.Task
         };
         using var oldVm = ValidForm(client, tokenStore);
         bool oldClosed = false;
@@ -379,6 +383,96 @@ public sealed class NewUserTests
         return completion.Task;
     }
 
+    [Fact]
+    public async Task RegistrationClientAlwaysOmitsJwtAndTenantEvenWhenBothAreSelected()
+    {
+        var tokens = new TokenStore { AccessToken = "existing-token" };
+        var tenants = new TenantContext();
+        tenants.SetTenant(new TenantDto(Guid.NewGuid(), "Selected", "Admin"));
+        var context = new ApiRequestContext(1, tokens.SessionVersion, null, null, CancellationToken.None, ApiRequestScope.Anonymous);
+        using var transport = new Transport(async (request, cancellation) =>
+        {
+            Assert.Equal("/api/auth/register", request.RequestUri!.AbsolutePath);
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Null(request.Headers.Authorization);
+            Assert.False(request.Headers.Contains("X-Tenant-Id"));
+            using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
+            Assert.Equal(3, body.RootElement.EnumerateObject().Count());
+            Assert.Equal(" exact-password ", body.RootElement.GetProperty("password").GetString());
+            return Json(HttpStatusCode.Created, "{\"userId\":\"new-id\"}");
+        });
+        using var http = Pipeline(tokens, tenants, transport);
+        var result = await new AuthenticationApiClient(http).RegisterAsync(context, "new", "new@example.com", " exact-password ");
+        Assert.Equal("new-id", result.UserId);
+        Assert.Equal("existing-token", tokens.AccessToken);
+        Assert.Single(transport.Calls);
+    }
+
+    [Fact]
+    public async Task RegistrationClientRejectsCredentialBearingContextsAndHonorsCancellation()
+    {
+        var tokens = new TokenStore { AccessToken = "token" };
+        using var transport = new Transport((_, _) => Task.FromResult(Json(HttpStatusCode.Created, "{}")));
+        using var http = Pipeline(tokens, new TenantContext(), transport);
+        var client = new AuthenticationApiClient(http);
+        var anonymous = new ApiRequestContext(1, tokens.SessionVersion, null, null, CancellationToken.None, ApiRequestScope.Anonymous);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.RegisterAsync(Context(tokens), "new", "email", "password"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.RegisterAsync(anonymous with { AccessToken = "token" }, "new", "email", "password"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.RegisterAsync(anonymous with { TenantId = Guid.NewGuid() }, "new", "email", "password"));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.RegisterAsync(anonymous with { CancellationToken = cancellation.Token }, "new", "email", "password"));
+        Assert.Empty(transport.Calls);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    public async Task RegistrationErrorsNeverClearAnExistingSessionOrRetry(HttpStatusCode status)
+    {
+        var tokens = new TokenStore { AccessToken = "token" };
+        using var transport = new Transport((_, _) => Task.FromResult(Json(status, "{}")));
+        using var http = Pipeline(tokens, new TenantContext(), transport);
+        var context = new ApiRequestContext(1, tokens.SessionVersion, null, null, CancellationToken.None, ApiRequestScope.Anonymous);
+        var result = await new AuthenticationApiClient(http).RegisterAsync(context, "new", "email", "password");
+        Assert.Equal(status, result.StatusCode);
+        Assert.Equal("token", tokens.AccessToken);
+        Assert.Single(transport.Calls);
+    }
+
+    [Fact]
+    public void AccountSelectorOffersBothActionsWithoutLogin()
+    {
+        var document = System.Xml.Linq.XDocument.Load(Path.Combine(AppContext.BaseDirectory, "Wpf", "MainWindow.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var selector = Assert.Single(document.Descendants(), element => (string?)element.Attribute(x + "Name") == "AccountActionSelector");
+        Assert.Equal("ComboBox", selector.Name.LocalName);
+        Assert.Equal(new[] { "Zaloguj", "Utwórz nowego użytkownika" }, selector.Elements().Where(element => element.Name.LocalName == "ComboBoxItem").Select(element => (string?)element.Attribute("Content")));
+        Assert.Contains("SelectedAccountAction", (string?)selector.Attribute("SelectedIndex"));
+        Assert.Null(selector.Attribute("IsEnabled"));
+        Assert.DoesNotContain(document.Descendants(), element => element.Name.LocalName == "Button" && (string?)element.Attribute("Content") == "Zaloguj");
+    }
+    [Fact]
+    public async Task AnonymousLoggedInAnonymousRoundTripCannotCommitTheOldRegistration()
+    {
+        var tokens = new TokenStore();
+        var pending = Completion();
+        var client = new FakeAuthenticationClient { Handler = _ => pending.Task };
+        using var vm = ValidForm(client, tokens);
+        bool closed = false;
+        vm.CloseRequested += _ => closed = true;
+        Task save = vm.SaveCommand.ExecuteAsync(null);
+        tokens.AccessToken = "intermediate-session";
+        tokens.AccessToken = null;
+        pending.SetResult(new UserCreationResult(HttpStatusCode.Created, "old-id", []));
+        await save;
+        Assert.False(closed);
+        Assert.False(vm.IsSessionValid);
+        Assert.Empty(vm.Password);
+        Assert.Empty(vm.ConfirmPassword);
+        Assert.Null(tokens.AccessToken);
+        Assert.True(Assert.Single(client.Contexts).CancellationToken.IsCancellationRequested);
+    }
     private static void DrainDispatcher()
     {
         var frame = new DispatcherFrame();
@@ -414,7 +508,8 @@ public sealed class NewUserTests
         public List<ApiRequestContext> Contexts { get; } = [];
         public Func<ApiRequestContext, Task<UserCreationResult>> Handler { get; set; }
             = _ => Task.FromResult(new UserCreationResult(HttpStatusCode.Created, "new-id", []));
-        public Task<UserCreationResult> CreateUserAsync(ApiRequestContext context, string login, string email, string password)
+        public Task<UserCreationResult> CreateUserAsync(ApiRequestContext context, string login, string email, string password) => throw new NotSupportedException();
+        public Task<UserCreationResult> RegisterAsync(ApiRequestContext context, string login, string email, string password)
         {
             Contexts.Add(context);
             return Handler(context);

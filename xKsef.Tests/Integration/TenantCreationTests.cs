@@ -32,13 +32,14 @@ using xKsef.Infrastructure.Persistence;
 
 namespace xKsef.Tests.Integration;
 
+[Collection(LocalDbIntegrationCollection.Name)]
 public sealed class TenantCreationTests
 {
     [Fact]
-    public async Task OperatorCreatesActiveTenantAndAdminMembershipForExistingUser()
+    public async Task AuthenticatedCreatorReceivesAdminOnlyInTheCreatedTenant()
     {
         await using var api = await TenantApi.CreateAsync();
-        using var response = await api.PostAsync(userLogin: api.TargetLogin.ToUpperInvariant());
+        using var response = await api.PostAsync();
         Guid tenantId = await ReadTenantIdAsync(response);
         using var scope = api.Server.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -65,7 +66,7 @@ public sealed class TenantCreationTests
         using var firstResponse = await api.PostAsync(name: api.Prefix + "-first");
         Guid firstId = await ReadTenantIdAsync(firstResponse);
         using var secondResponse = await api.PostAsync(name: api.Prefix + "-second", taxEntityName: api.Prefix + "-replacement",
-            userLogin: sameUser ? api.TargetLogin : api.OtherLogin);
+            callerId: sameUser ? api.TargetId : api.OtherId);
         Guid secondId = await ReadTenantIdAsync(secondResponse);
         Assert.NotEqual(firstId, secondId);
 
@@ -85,7 +86,7 @@ public sealed class TenantCreationTests
         await using var api = await TenantApi.CreateAsync();
         using var firstResponse = await api.PostAsync(name: api.Prefix + "-first");
         Guid firstId = await ReadTenantIdAsync(firstResponse);
-        using var secondResponse = await api.PostAsync(name: api.Prefix + "-second", userLogin: api.OtherLogin);
+        using var secondResponse = await api.PostAsync(name: api.Prefix + "-second", callerId: api.OtherId);
         Guid secondId = await ReadTenantIdAsync(secondResponse);
 
         using (var scope = api.Server.Services.CreateScope())
@@ -123,9 +124,9 @@ public sealed class TenantCreationTests
             Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
         }
 
-        // Even an actual tenant Admin cannot use the operator endpoint.
+        // Any authenticated user can create a separate tenant without global roles.
         using var denied = await api.PostAsync(callerId: api.TargetId);
-        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, denied.StatusCode);
 
         // Existing endpoints also remain available to an ordinary tenant member.
         using (var scope = api.Server.Services.CreateScope())
@@ -143,11 +144,11 @@ public sealed class TenantCreationTests
 
     [Theory]
     [InlineData("anonymous", HttpStatusCode.Unauthorized)]
-    [InlineData("other-user", HttpStatusCode.Forbidden)]
-    [InlineData("admin-claim", HttpStatusCode.Forbidden)]
-    [InlineData("missing-configuration", HttpStatusCode.Forbidden)]
-    [InlineData("invalid-configuration", HttpStatusCode.Forbidden)]
-    public async Task CreationRequiresConfiguredOperator(string mode, HttpStatusCode expected)
+    [InlineData("other-user", HttpStatusCode.Created)]
+    [InlineData("admin-claim", HttpStatusCode.Created)]
+    [InlineData("missing-configuration", HttpStatusCode.Created)]
+    [InlineData("invalid-configuration", HttpStatusCode.Created)]
+    public async Task CreationRequiresOnlyAnAuthenticatedAccount(string mode, HttpStatusCode expected)
     {
         await using var api = await TenantApi.CreateAsync();
         if (mode == "missing-configuration") api.Configuration["ApplicationOperator:UserId"] = null;
@@ -155,8 +156,16 @@ public sealed class TenantCreationTests
         string? caller = mode == "anonymous" ? null : mode is "other-user" or "admin-claim" ? api.TargetId : api.OperatorId;
         using var response = await api.SendAsync(HttpMethod.Post, "/api/tenants", caller, api.Body(), mode == "admin-claim");
         Assert.Equal(expected, response.StatusCode);
-        await api.AssertNoTenantsAsync();
-        Assert.Equal(0, api.Interceptor.TenantSaveCalls);
+        if (expected == HttpStatusCode.Created)
+        {
+            Guid id = await ReadTenantIdAsync(response);
+            using var scope = api.Server.Services.CreateScope();
+            var membership = await scope.ServiceProvider.GetRequiredService<AppDbContext>().UserTenants.SingleAsync(x => x.TenantId == id);
+            Assert.Equal(caller, membership.UserId);
+            Assert.Equal("Admin", membership.Role);
+        }
+        else await api.AssertNoTenantsAsync();
+        Assert.Equal(expected == HttpStatusCode.Created ? 1 : 0, api.Interceptor.TenantSaveCalls);
     }
 
     [Theory]
@@ -170,14 +179,11 @@ public sealed class TenantCreationTests
     [InlineData("Nip", "1234567890\n")]
     [InlineData("TaxEntityName", "")]
     [InlineData("TaxEntityName", "too-long")]
-    [InlineData("UserLogin", " ")]
-    [InlineData("UserLogin", "too-long")]
-    [InlineData("UserLogin", "missing-user")]
     public async Task InvalidDataOrMissingUserReturnsBadRequestWithoutPartialData(string field, string value)
     {
         await using var api = await TenantApi.CreateAsync();
         Dictionary<string, object?> body = api.Body();
-        body[field] = value == "too-long" ? new string('x', field == "UserLogin" ? 257 : 201) : value;
+        body[field] = value == "too-long" ? new string('x', 201) : value;
         using var response = await api.SendAsync(HttpMethod.Post, "/api/tenants", api.OperatorId, body);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         await api.AssertNoTenantsAsync();
@@ -203,6 +209,8 @@ public sealed class TenantCreationTests
         body["Id"] = suppliedId;
         body["Role"] = "User";
         body["IsActive"] = false;
+        body["UserLogin"] = api.OtherLogin;
+        body["UserId"] = api.OtherId;
         using var response = await api.SendAsync(HttpMethod.Post, "/api/tenants", api.OperatorId, body);
         Guid createdId = await ReadTenantIdAsync(response);
         Assert.NotEqual(suppliedId, createdId);
@@ -211,6 +219,7 @@ public sealed class TenantCreationTests
         Assert.True((await db.Tenants.SingleAsync(x => x.Id == createdId)).IsActive);
         Assert.Equal("Admin", (await db.UserTenants.SingleAsync(x => x.TenantId == createdId)).Role);
         Assert.False(await db.Tenants.AnyAsync(x => x.Id == suppliedId));
+        Assert.Equal(api.OperatorId, (await db.UserTenants.SingleAsync(x => x.TenantId == createdId)).UserId);
     }
 
     [Fact]
@@ -220,7 +229,7 @@ public sealed class TenantCreationTests
         api.Interceptor.GateParallelSaves = true;
         HttpResponseMessage[] responses = await Task.WhenAll(
             api.PostAsync(name: api.Prefix + "-first"),
-            api.PostAsync(name: api.Prefix + "-second", userLogin: api.OtherLogin)).WaitAsync(TimeSpan.FromSeconds(20));
+            api.PostAsync(name: api.Prefix + "-second", callerId: api.OtherId)).WaitAsync(TimeSpan.FromSeconds(20));
         try
         {
             Assert.Single(responses, x => x.StatusCode == HttpStatusCode.Created);
@@ -265,7 +274,7 @@ public sealed class TenantCreationTests
             Assert.Null(db.Database.CurrentTransaction);
             var service = scope.ServiceProvider.GetRequiredService<ITenantService>();
             DbUpdateException exception = await Assert.ThrowsAsync<DbUpdateException>(() =>
-                service.CreateAsync(api.Prefix + "-tenant", api.Nip, api.Prefix + "-tax", api.TargetLogin));
+                service.CreateAsync(api.Prefix + "-tenant", api.Nip, api.Prefix + "-tax", api.TargetId));
             Assert.Equal(547, Assert.IsType<SqlException>(exception.InnerException).Number);
         }
 
@@ -281,6 +290,70 @@ public sealed class TenantCreationTests
         Assert.Equal(1, api.Interceptor.TenantSaveCalls);
     }
 
+    [Fact]
+    public async Task IdenticalNamesAndNipsCreateIndependentTenantsForDifferentCreators()
+    {
+        await using var api = await TenantApi.CreateAsync();
+        using var first = await api.PostAsync(callerId: api.TargetId);
+        using var second = await api.PostAsync(callerId: api.OtherId);
+        Guid firstId = await ReadTenantIdAsync(first);
+        Guid secondId = await ReadTenantIdAsync(second);
+        Assert.NotEqual(firstId, secondId);
+        using var scope = api.Server.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var rows = await db.Tenants.Where(tenant => tenant.Id == firstId || tenant.Id == secondId).ToArrayAsync();
+        Assert.Equal(rows[0].Name, rows[1].Name);
+        Assert.Equal(rows[0].TaxEntityId, rows[1].TaxEntityId);
+        var access = scope.ServiceProvider.GetRequiredService<ITenantAccessService>();
+        Assert.Equal(new[] { "Admin" }, await access.GetRolesAsync(api.TargetId, firstId));
+        Assert.Empty(await access.GetRolesAsync(api.TargetId, secondId));
+        Assert.False(await access.HasAccessAsync(api.OtherId, firstId));
+        using var list = await api.SendAsync(HttpMethod.Get, "/api/tenants", api.TargetId);
+        Assert.Equal(firstId, Assert.Single((await list.Content.ReadFromJsonAsync<List<TenantDto>>())!).Id);
+        (await db.Tenants.SingleAsync(tenant => tenant.Id == firstId)).IsActive = false;
+        await db.SaveChangesAsync();
+        using var inactiveList = await api.SendAsync(HttpMethod.Get, "/api/tenants", api.TargetId);
+        Assert.Empty((await inactiveList.Content.ReadFromJsonAsync<List<TenantDto>>())!);
+        Assert.False(await access.HasAccessAsync(api.TargetId, firstId));
+    }
+
+    [Fact]
+    public async Task JwtForMissingAccountCannotCreateTenant()
+    {
+        await using var api = await TenantApi.CreateAsync();
+        using var response = await api.PostAsync(callerId: Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        await api.AssertNoTenantsAsync();
+    }
+    [Fact]
+    public async Task ConcurrentTenantsWithTheSameNameAndExistingNipBothSucceed()
+    {
+        await using var api = await TenantApi.CreateAsync();
+        Guid taxEntityId = Guid.NewGuid();
+        using (var setup = api.Server.Services.CreateScope())
+        {
+            var db = setup.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.TaxEntities.Add(new TaxEntity { Id = taxEntityId, Nip = api.Nip, Name = api.Prefix + "-existing" });
+            await db.SaveChangesAsync();
+        }
+        api.Interceptor.GateParallelSaves = true;
+        var responses = await Task.WhenAll(api.PostAsync(callerId: api.TargetId), api.PostAsync(callerId: api.OtherId));
+        try
+        {
+            var first = await ReadTenantIdAsync(responses[0]);
+            var second = await ReadTenantIdAsync(responses[1]);
+            Assert.NotEqual(first, second);
+            using var scope = api.Server.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var rows = await db.Tenants.Where(tenant => tenant.Id == first || tenant.Id == second).ToArrayAsync();
+            Assert.Equal(2, rows.Length);
+            Assert.All(rows, tenant => Assert.Equal(taxEntityId, tenant.TaxEntityId));
+            Assert.Equal(rows[0].Name, rows[1].Name);
+            Assert.Equal(api.Prefix + "-existing", (await db.TaxEntities.SingleAsync(tax => tax.Id == taxEntityId)).Name);
+            Assert.Equal(2, api.Interceptor.TenantSaveCalls);
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+    }
     private static async Task<Guid> ReadTenantIdAsync(HttpResponseMessage response)
     {
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -310,7 +383,6 @@ public sealed class TenantCreationTests
                 db.ChangeTracker.Entries<UserTenant>().Single(x => x.State == EntityState.Added).Entity.UserId = Guid.NewGuid().ToString();
             if (GateParallelSaves)
             {
-                Assert.Single(db.ChangeTracker.Entries<TaxEntity>(), x => x.State == EntityState.Added);
                 if (calls == 2) _bothReady.TrySetResult();
                 await _bothReady.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             }
@@ -402,16 +474,15 @@ public sealed class TenantCreationTests
             }
         }
 
-        public Dictionary<string, object?> Body(string? name = null, string? taxEntityName = null, string? userLogin = null) => new()
+        public Dictionary<string, object?> Body(string? name = null, string? taxEntityName = null) => new()
         {
             ["Name"] = name ?? Prefix + "-tenant",
             ["Nip"] = Nip,
-            ["TaxEntityName"] = taxEntityName ?? Prefix + "-tax",
-            ["UserLogin"] = userLogin ?? TargetLogin
+            ["TaxEntityName"] = taxEntityName ?? Prefix + "-tax"
         };
 
-        public Task<HttpResponseMessage> PostAsync(string? name = null, string? taxEntityName = null, string? userLogin = null, string? callerId = null)
-            => SendAsync(HttpMethod.Post, "/api/tenants", callerId ?? OperatorId, Body(name, taxEntityName, userLogin));
+        public Task<HttpResponseMessage> PostAsync(string? name = null, string? taxEntityName = null, string? callerId = null)
+            => SendAsync(HttpMethod.Post, "/api/tenants", callerId ?? TargetId, Body(name, taxEntityName));
 
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string url, string? callerId, object? body = null, bool admin = false)
         {

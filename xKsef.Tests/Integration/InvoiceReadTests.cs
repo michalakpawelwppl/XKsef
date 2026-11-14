@@ -34,6 +34,7 @@ using Direction = xKsef.Domain.Invoices.InvoiceDirection;
 
 namespace xKsef.Tests.Integration;
 
+[Collection(LocalDbIntegrationCollection.Name)]
 public sealed class InvoiceReadTests
 {
     [Theory]

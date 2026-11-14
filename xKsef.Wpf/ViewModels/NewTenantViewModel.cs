@@ -2,7 +2,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Net;
 using System.Net.Http;
-using System.Text.Json;
 using xKsef.Wpf.Http;
 using xKsef.Wpf.Models;
 
@@ -27,8 +26,6 @@ public sealed partial class NewTenantViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _taxEntityName = string.Empty;
     [ObservableProperty]
-    private string _userLogin = string.Empty;
-    [ObservableProperty]
     private string _errorMessage = string.Empty;
 
     [ObservableProperty]
@@ -49,29 +46,11 @@ public sealed partial class NewTenantViewModel : ObservableObject, IDisposable
         _tokenStore = tokenStore;
         var session = tokenStore.GetSessionSnapshot();
         _context = new ApiRequestContext(session.SessionVersion, session.SessionVersion, null, session.AccessToken, _cancellation.Token, ApiRequestScope.User);
-        UserLogin = ReadLogin(session.AccessToken);
         IsSessionValid = !string.IsNullOrWhiteSpace(session.AccessToken);
         _tokenStore.TokenChanged += OnTokenChanged;
         if (!IsCurrentSession()) InvalidateSession();
     }
 
-    private static string ReadLogin(string? token)
-    {
-        // Decode only to prefill the form; the API performs authentication and authorization.
-        if (token is null) return string.Empty;
-        string[] parts = token.Split('.');
-        if (parts.Length != 3) return string.Empty;
-        try
-        {
-            string payload = parts[1].Replace('-', '+').Replace('_', '/');
-            payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
-            using JsonDocument json = JsonDocument.Parse(Convert.FromBase64String(payload));
-            return json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("unique_name", out JsonElement login) && login.ValueKind == JsonValueKind.String
-                ? login.GetString() ?? string.Empty : string.Empty;
-        }
-        catch (FormatException) { return string.Empty; }
-        catch (JsonException) { return string.Empty; }
-    }
 
     private bool IsCurrentSession() => !_isClosed && !_context.CancellationToken.IsCancellationRequested
         && _tokenStore.SessionVersion == _context.SessionVersion && !string.IsNullOrWhiteSpace(_context.AccessToken);
@@ -81,7 +60,7 @@ public sealed partial class NewTenantViewModel : ObservableObject, IDisposable
     {
         if (!CanEdit || !IsCurrentSession()) return;
         ErrorMessage = string.Empty;
-        if (string.IsNullOrWhiteSpace(Name) || string.IsNullOrWhiteSpace(Nip) || string.IsNullOrWhiteSpace(TaxEntityName) || string.IsNullOrWhiteSpace(UserLogin))
+        if (string.IsNullOrWhiteSpace(Name) || string.IsNullOrWhiteSpace(Nip) || string.IsNullOrWhiteSpace(TaxEntityName))
         {
             ErrorMessage = "Uzupełnij wszystkie pola.";
             return;
@@ -91,16 +70,16 @@ public sealed partial class NewTenantViewModel : ObservableObject, IDisposable
             ErrorMessage = "NIP musi składać się z 10 cyfr.";
             return;
         }
-        if (Name.Length > 200 || TaxEntityName.Length > 200 || UserLogin.Length > 256)
+        if (Name.Length > 200 || TaxEntityName.Length > 200)
         {
-            ErrorMessage = "Nazwa tenanta i podmiotu mogą mieć do 200 znaków, a login do 256 znaków.";
+            ErrorMessage = "Nazwa tenanta i podmiotu mogą mieć do 200 znaków.";
             return;
         }
 
         try
         {
             IsSaving = true;
-            TenantCreationResult result = await _tenantApiClient.CreateTenantAsync(_context, Name.Trim(), Nip, TaxEntityName.Trim(), UserLogin.Trim());
+            TenantCreationResult result = await _tenantApiClient.CreateTenantAsync(_context, Name.Trim(), Nip, TaxEntityName.Trim());
             if (!IsCurrentSession()) return;
             switch (result.StatusCode)
             {
@@ -116,7 +95,7 @@ public sealed partial class NewTenantViewModel : ObservableObject, IDisposable
                     ErrorMessage = "Sesja wygasła. Zaloguj się ponownie.";
                     break;
                 case HttpStatusCode.Forbidden:
-                    ErrorMessage = "Brak uprawnień operatora do tworzenia tenantów.";
+                    ErrorMessage = "Brak dostępu do tworzenia tenanta. Zaloguj się ponownie.";
                     break;
                 case HttpStatusCode.Conflict:
                     ErrorMessage = "Konflikt zapisu podmiotu o podanym NIP. Tenant nie został utworzony.";
@@ -145,8 +124,6 @@ public sealed partial class NewTenantViewModel : ObservableObject, IDisposable
 
     private static string TranslateError(string code) => code switch
     {
-        "UserNotFound" => "Użytkownik o podanym loginie nie istnieje.",
-        "InvalidUserLogin" => "Podaj poprawny login użytkownika (do 256 znaków).",
         "InvalidName" => "Podaj nazwę tenanta (do 200 znaków).",
         "InvalidTaxEntityName" => "Podaj nazwę podmiotu podatkowego (do 200 znaków).",
         "InvalidNip" => "NIP musi składać się z 10 cyfr.",

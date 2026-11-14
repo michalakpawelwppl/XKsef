@@ -20,10 +20,10 @@ public sealed class TenantService : ITenantService
         _userManager = userManager;
     }
 
-    public async Task<CreateTenantResult> CreateAsync(string name, string nip, string taxEntityName, string userLogin, CancellationToken cancellationToken = default)
+    public async Task<CreateTenantResult> CreateAsync(string name, string nip, string taxEntityName, string userId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ApplicationUser? user = await _userManager.FindByNameAsync(userLogin.Trim());
+        ApplicationUser? user = await _userManager.FindByIdAsync(userId);
         if (user is null)
             return new CreateTenantResult(null, "UserNotFound");
 

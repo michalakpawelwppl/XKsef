@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Net;
 using System.Net.Http;
@@ -1544,9 +1544,9 @@ public sealed class InvoiceContextIsolationTests
         Assert.Equal(new KsefTokenInfo(true, credentialId), tokenInfo);
         AssertCapturedCredentialsContext(transport, tenantA);
 
-        KsefTokenInfo certificateInfo = await client.GetCertificateInfoAsync(context);
+        KsefTokenInfo certificateInfo = await client.GetCertificateInfoAsync(context with { Scope = ApiRequestScope.User, TenantId = null });
         Assert.Equal(new KsefTokenInfo(true, credentialId), certificateInfo);
-        AssertCapturedCredentialsContext(transport, tenantA);
+        Assert.Null(transport.LastTenantId);
 
         Guid savedCredentialId = await client.SaveTokenAsync(context, "secret-token");
         Assert.Equal(credentialId, savedCredentialId);
@@ -1589,6 +1589,11 @@ public sealed class InvoiceContextIsolationTests
             string path = request.RequestUri!.AbsolutePath;
             if (path.EndsWith("/api/auth/login", StringComparison.Ordinal))
                 return Task.FromResult(JsonResponse(System.Text.Json.JsonSerializer.Serialize(new LoginResponse("login-token", "Bearer"))));
+            if (path.EndsWith("authenticate-token", StringComparison.Ordinal) || path.EndsWith("authenticate-certificate", StringComparison.Ordinal))
+            {
+                var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                Assert.True(System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("credentialId").GetGuid() != Guid.Empty);
+            }
             if (path.EndsWith("/api/ksef/authentication/certificate", StringComparison.Ordinal))
                 return Task.FromResult(JsonResponse(System.Text.Json.JsonSerializer.Serialize(new { CredentialId = credentialId })));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
@@ -1606,9 +1611,10 @@ public sealed class InvoiceContextIsolationTests
         await client.AuthenticateKsefTokenAsync(tenantContextA, Guid.NewGuid());
         AssertCapturedCredentialsContext(transport, tenantA);
 
-        Guid savedCredential = await client.SaveKsefCertificateAsync(tenantContextA, "certificate", "private-key", "password");
+        Guid savedCredential = await client.SaveKsefCertificateAsync(tenantContextA with { Scope = ApiRequestScope.User, TenantId = null }, "certificate", "private-key", "password");
         Assert.Equal(credentialId, savedCredential);
-        AssertCapturedCredentialsContext(transport, tenantA);
+        Assert.Null(transport.LastTenantId);
+        Assert.Equal(ApiRequestScope.User, transport.LastRequestContext!.Value.Scope);
 
         await client.AuthenticateKsefCertificateAsync(tenantContextA, Guid.NewGuid());
         AssertCapturedCredentialsContext(transport, tenantA);
@@ -1726,7 +1732,7 @@ public sealed class InvoiceContextIsolationTests
                 Assert.Equal(2, credentialsClient.TokenInfoContexts.Count);
                 Assert.Single(credentialsClient.CertificateInfoContexts);
                 Assert.Equal(tenantB.Id, credentialsClient.TokenInfoContexts[1].TenantId);
-                Assert.Equal(credentialsClient.TokenInfoContexts[1], credentialsClient.CertificateInfoContexts[0]);
+                Assert.Equal(credentialsClient.TokenInfoContexts[1] with { Scope = ApiRequestScope.User, TenantId = null }, credentialsClient.CertificateInfoContexts[0]);
                 Assert.True(viewModel.HasKsefToken);
                 Assert.Equal(tenantBCredentialId, viewModel.KsefCredentialId);
 
@@ -1778,7 +1784,7 @@ public sealed class InvoiceContextIsolationTests
 
                 Assert.Equal(2, credentialsClient.TokenInfoContexts.Count);
                 Assert.Equal(2, credentialsClient.CertificateInfoContexts.Count);
-                Assert.Equal(credentialsClient.TokenInfoContexts[1], credentialsClient.CertificateInfoContexts[1]);
+                Assert.Equal(credentialsClient.TokenInfoContexts[1] with { Scope = ApiRequestScope.User, TenantId = null }, credentialsClient.CertificateInfoContexts[1]);
                 Assert.True(viewModel.HasKsefCertificate);
                 Assert.Equal(tenantBCertificateId, viewModel.KsefCertificateCredentialId);
 
@@ -2567,10 +2573,8 @@ public sealed class InvoiceContextIsolationTests
         });
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public Task SessionChangeDuringTenantListUpdatePreventsOldSelection(bool changeBeforeSelection)
+    [Fact]
+    public Task SessionChangeDuringTenantListUpdatePreventsOldSelection()
     {
         return WpfTestDispatcher.RunAsync(async () =>
         {
@@ -2598,7 +2602,7 @@ public sealed class InvoiceContextIsolationTests
             };
             vm.AvailableTenants.CollectionChanged += (_, args) =>
             {
-                if (!changed && args.Action == (changeBeforeSelection ? System.Collections.Specialized.NotifyCollectionChangedAction.Add : System.Collections.Specialized.NotifyCollectionChangedAction.Reset))
+                if (!changed && args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add)
                 {
                     changed = true;
                     tokens.AccessToken = "token-B";
@@ -2974,6 +2978,249 @@ public sealed class InvoiceContextIsolationTests
         vm.SelectedKsefCredential = option;
         vm.PreferredKsefCredentialId = option.CredentialId;
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public Task RegistrationReturnsToLoginOnlyAfterSuccessWithoutAutomaticallyLoggingIn(bool registered)
+    {
+        return WpfTestDispatcher.RunAsync(() =>
+        {
+            var tokens = new TokenStore();
+            int registrationCalls = 0;
+            var navigation = new FakeWindowNavigationService { ShowNewUserHandler = () => { registrationCalls++; return registered; } };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, new TenantContext(), new FakeTenantApiClient(), navigationService: navigation);
+            try
+            {
+                vm.SelectedAccountAction = 1;
+                Assert.Equal(1, registrationCalls);
+                Assert.Equal(registered ? 1 : 0, navigation.LoginCalls);
+                Assert.False(vm.IsLoggedIn);
+                Assert.Null(tokens.AccessToken);
+                Assert.Equal(-1, vm.SelectedAccountAction);
+                vm.SelectedAccountAction = 0;
+                Assert.Equal(registered ? 2 : 1, navigation.LoginCalls);
+            }
+            finally { vm.Cleanup(); }
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public Task RegistrationDoesNotOpenLoginAfterAnotherSessionAppears()
+    {
+        return WpfTestDispatcher.RunAsync(() =>
+        {
+            var tokens = new TokenStore();
+            var navigation = new FakeWindowNavigationService { ShowNewUserHandler = () => { tokens.AccessToken = "new-session"; return true; } };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, new TenantContext(), new FakeTenantApiClient(), navigationService: navigation);
+            try
+            {
+                vm.NewUserCommand.Execute(null);
+                Assert.Equal(0, navigation.LoginCalls);
+                Assert.Equal("new-session", tokens.AccessToken);
+            }
+            finally { vm.Cleanup(); }
+            return Task.CompletedTask;
+        });
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task TenantRoundTripInvalidatesCreationRefreshEvenWithTheSameSession(bool duringRefresh)
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token-A" };
+            var tenants = new TenantContext();
+            TenantDto a = new(Guid.NewGuid(), "A", "Admin");
+            TenantDto b = new(Guid.NewGuid(), "B", "Admin");
+            TenantDto created = new(Guid.NewGuid(), "Created", "Admin");
+            var pending = NewCompletionSource<IReadOnlyList<TenantDto>>();
+            var client = new FakeTenantApiClient { GetMyTenantsContextHandler = _ => pending.Task };
+            var navigation = new FakeWindowNavigationService();
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, client, navigationService: navigation);
+            vm.IsLoggedIn = true;
+            vm.AvailableTenants.Add(a);
+            vm.SelectedTenant = a;
+            navigation.ShowNewTenantHandler = () =>
+            {
+                if (!duringRefresh) { vm.SelectedTenant = b; vm.SelectedTenant = a; }
+                return new TenantCreationDialogResult(created.Id, tokens.SessionVersion);
+            };
+            try
+            {
+                Task refresh = vm.NewTenantCommand.ExecuteAsync(null);
+                if (duringRefresh)
+                {
+                    vm.SelectedTenant = b;
+                    vm.SelectedTenant = a;
+                    await WpfTestDispatcher.DrainAsync();
+                    vm.Status = "Current context";
+                    pending.SetResult(new[] { a, created });
+                }
+                await refresh;
+                Assert.Equal(a, vm.SelectedTenant);
+                Assert.DoesNotContain(vm.AvailableTenants, tenant => tenant.Id == created.Id);
+                if (duringRefresh) Assert.Equal("Current context", vm.Status);
+                Assert.Equal(duringRefresh ? 1 : 0, client.UserContexts.Count);
+            }
+            finally { vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task MembershipSelfChangeUpdatesMainMenuAndAvailableTenants(bool remove)
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token" };
+            var tenants = new TenantContext();
+            var a = new TenantDto(Guid.NewGuid(), "A", "Admin");
+            var b = new TenantDto(Guid.NewGuid(), "B", "Admin");
+            var navigation = new FakeWindowNavigationService { ShowTenantUsersHandler = changed => changed(remove ? null : "User") };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, new FakeTenantApiClient(), navigationService: navigation);
+            try
+            {
+                vm.IsLoggedIn = true; vm.AvailableTenants.Add(a); vm.AvailableTenants.Add(b); vm.SelectedTenant = a;
+                Assert.True(vm.ManageTenantUsersCommand.CanExecute(null));
+                vm.ManageTenantUsersCommand.Execute(null);
+                Assert.False(vm.CanManageTenantUsers); Assert.False(vm.ManageTenantUsersCommand.CanExecute(null));
+                Assert.Equal(remove ? null : "User", vm.SelectedTenant?.Role);
+                Assert.Equal(vm.SelectedTenant, tenants.CurrentTenant);
+                Assert.Contains(b, vm.AvailableTenants);
+                Assert.Equal(remove ? 1 : 2, vm.AvailableTenants.Count);
+                Assert.DoesNotContain(a, vm.AvailableTenants);
+                Assert.Contains(remove ? "odebrany" : "uprawnienia", vm.Status);
+                Assert.Equal("token", tokens.AccessToken);
+            }
+            finally { vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task MembershipCallbackCannotChangeMainContextAfterARoundTrip(bool session)
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token" }; var tenants = new TenantContext();
+            var a = new TenantDto(Guid.NewGuid(), "A", "Admin"); var b = new TenantDto(Guid.NewGuid(), "B", "Admin");
+            Action<string?>? callback = null;
+            var navigation = new FakeWindowNavigationService { ShowTenantUsersHandler = changed => callback = changed };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, new FakeTenantApiClient(), navigationService: navigation);
+            try
+            {
+                vm.IsLoggedIn = true; vm.AvailableTenants.Add(a); vm.AvailableTenants.Add(b); vm.SelectedTenant = a;
+                vm.ManageTenantUsersCommand.Execute(null);
+                if (session) { tokens.AccessToken = "other"; tokens.AccessToken = "token"; vm.IsLoggedIn = true; vm.AvailableTenants.Add(a); vm.SelectedTenant = a; }
+                else { vm.SelectedTenant = b; vm.SelectedTenant = a; }
+                callback!(null);
+                Assert.Equal(a, vm.SelectedTenant); Assert.Equal(a, tenants.CurrentTenant); Assert.True(vm.CanManageTenantUsers);
+            }
+            finally { vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+    [Fact]
+    public Task AccountSelectorHasAVisiblePromptAndRemainsReusableAfterCancellation()
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var navigation = new FakeWindowNavigationService();
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), new TokenStore(), new TenantContext(), new FakeTenantApiClient(), navigationService: navigation);
+            var document = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "Wpf", "MainWindow.xaml"));
+            XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+            XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+            var element = new XElement(document.Descendants(ns + "ComboBox").Single(e => (string?)e.Attribute(x + "Name") == "AccountActionSelector").Parent!);
+            AddWindowResources(element, document);
+            var grid = (Grid)System.Windows.Markup.XamlReader.Parse(element.ToString());
+            grid.DataContext = vm;
+            var window = new Window { Content = grid, Width = 240, Height = 100, Left = -10000, Top = -10000, ShowInTaskbar = false, ShowActivated = false };
+            try
+            {
+                window.Show(); await WpfTestDispatcher.DrainAsync();
+                var selector = grid.Children.OfType<ComboBox>().Single();
+                var prompt = grid.Children.OfType<TextBlock>().Single();
+                Assert.Equal(2, selector.Items.Count); Assert.Equal(-1, selector.SelectedIndex);
+                Assert.False(prompt.IsHitTestVisible); Assert.Equal(Visibility.Visible, prompt.Visibility); Assert.False(string.IsNullOrWhiteSpace(prompt.Text));
+                selector.SelectedIndex = 0; await WpfTestDispatcher.DrainAsync();
+                Assert.Equal(1, navigation.LoginCalls); Assert.Equal(-1, selector.SelectedIndex); Assert.Equal(Visibility.Visible, prompt.Visibility);
+                selector.SelectedIndex = 0; await WpfTestDispatcher.DrainAsync(); Assert.Equal(2, navigation.LoginCalls);
+                vm.IsLoggedIn = true; await WpfTestDispatcher.DrainAsync(); Assert.Equal(Visibility.Collapsed, prompt.Visibility); Assert.Equal(Visibility.Collapsed, selector.Visibility);
+                vm.IsLoggedIn = false; await WpfTestDispatcher.DrainAsync(); Assert.Equal(Visibility.Visible, prompt.Visibility);
+            }
+            finally { grid.DataContext = null; window.Close(); vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+    [Fact]
+    public Task LoginWindowKeepsTheErrorMessageInsideItsVisibleClientArea()
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var vm = new LoginViewModel(new FakeAuthenticationApiClient(), new TokenStore(), new FakeWindowNavigationService()) { ErrorMessage = "Nieprawidlowy login lub haslo. Sprobuj ponownie." };
+            var window = new xKsef.Wpf.Views.LoginWindow(vm) { WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000, ShowInTaskbar = false, ShowActivated = false };
+            try
+            {
+                window.Show(); await WpfTestDispatcher.DrainAsync(); window.UpdateLayout();
+                Assert.Equal(SizeToContent.Height, window.SizeToContent);
+                var panel = Assert.IsType<StackPanel>(window.Content);
+                var message = panel.Children.OfType<TextBlock>().Last();
+                Assert.Equal(vm.ErrorMessage, message.Text); Assert.True(message.ActualHeight > 0);
+                Assert.True(message.TranslatePoint(new Point(0, message.ActualHeight), window).Y <= window.ActualHeight);
+            }
+            finally { window.Close(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+    [Fact]
+    public Task CertificateConfigurationAndListWorkWithoutSelectedTenant()
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token" }; var tenants = new TenantContext();
+            var auth = new FakeAuthenticationApiClient(); var catalog = new FakeKsefCredentialsApiClient();
+            var files = CreateCertificateFiles();
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, new FakeTenantApiClient(), catalog, authenticationApiClient: auth,
+                certificateSelectionWindowService: new FakeCertificateSelectionWindowService { SelectHandler = () => files });
+            try
+            {
+                await WpfTestDispatcher.DrainAsync(); vm.IsLoggedIn = true;
+                await vm.ConfigureKsefCertificateCommand.ExecuteAsync(null);
+                var call = Assert.Single(auth.SaveCertificateContexts);
+                Assert.Equal(ApiRequestScope.User, call.Scope); Assert.Null(call.TenantId);
+                Assert.True(vm.HasKsefCertificate); Assert.False(vm.IsLoading); Assert.Null(vm.SelectedTenant);
+                Assert.All(catalog.CertificateInfoContexts, c => { Assert.Equal(ApiRequestScope.User, c.Scope); Assert.Null(c.TenantId); });
+            }
+            finally { DeleteCertificateFiles(files); vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    public Task EmptyExportMessageIsDistinctFromSkippedDuplicates(int tab, bool duplicates)
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var (vm, api, _, _) = CreateQueryModel();
+            vm.SelectedTabIndex = tab;
+            api.ImportHandler = (_, _, _, _) => Task.FromResult(new InvoicePackageReadResult
+            {
+                ReferenceNumber = "REF", DeclaredInvoiceCount = duplicates ? 1 : 0,
+                ReadInvoiceCount = duplicates ? 1 : 0, ImportedCount = 0, SkippedCount = duplicates ? 1 : 0
+            });
+            try
+            {
+                UseSavedCredential(vm);
+                await vm.ImportFromKsefCommand.ExecuteAsync(null);
+                Assert.False(vm.IsLoading); Assert.Single(api.ImportContexts); Assert.Single(api.QueryFilters);
+                if (duplicates) { Assert.Contains("pominięto: 1", vm.Status); Assert.DoesNotContain("Nie znaleziono", vm.Status); }
+                else Assert.Equal("Nie znaleziono nowych faktur w wybranym okresie", vm.Status);
+            }
+            finally { vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
     private static MainViewModel CreateViewModel(FakeInvoiceApiClient invoiceClient, ITokenStore tokenStore, TenantContext tenantContext, FakeTenantApiClient tenantApiClient, FakeKsefCredentialsApiClient? credentialsApiClient = null, FakeKsefTokenWindowService? tokenWindowService = null, FakeAuthenticationApiClient? authenticationApiClient = null, ICertificateSelectionWindowService? certificateSelectionWindowService = null, FakeWindowNavigationService? navigationService = null)
     {
         return new MainViewModel(
@@ -3063,7 +3310,7 @@ public sealed class InvoiceContextIsolationTests
         public int GetMyTenantsCallCount { get; private set; }
         public List<ApiRequestContext> UserContexts { get; } = [];
         public Func<ApiRequestContext, Task<IReadOnlyList<TenantDto>>>? GetMyTenantsContextHandler { get; set; }
-        public Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName, string userLogin)
+        public Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName)
             => Task.FromResult(new TenantCreationResult(HttpStatusCode.Created, Guid.NewGuid(), []));
         public Task<IReadOnlyList<TenantDto>> GetMyTenantsAsync(ApiRequestContext context)
         {
@@ -3129,6 +3376,8 @@ public sealed class InvoiceContextIsolationTests
 
     private sealed class FakeAuthenticationApiClient : IAuthenticationApiClient
     {
+        public Task<UserCreationResult> RegisterAsync(ApiRequestContext context, string login, string email, string password) => throw new NotSupportedException();
+
         public Task<xKsef.Wpf.Models.UserCreationResult> CreateUserAsync(ApiRequestContext context, string login, string email, string password)
             => Task.FromResult(new xKsef.Wpf.Models.UserCreationResult(HttpStatusCode.Created, Guid.NewGuid().ToString(), Array.Empty<string>()));
 
@@ -3171,8 +3420,13 @@ public sealed class InvoiceContextIsolationTests
 
     private sealed class FakeWindowNavigationService : IWindowNavigationService
     {
-        public bool? ShowLoginWindow() => null;
-        public bool? ShowNewUserWindow() => null;
+        public Action<Action<string?>> ShowTenantUsersHandler { get; set; } = _ => { };
+        public void ShowTenantUsersWindow(Action<string?> currentAccessChanged) => ShowTenantUsersHandler(currentAccessChanged);
+
+        public int LoginCalls { get; private set; }
+        public Func<bool?> ShowNewUserHandler { get; set; } = () => null;
+        public bool? ShowLoginWindow() { LoginCalls++; return null; }
+        public bool? ShowNewUserWindow() => ShowNewUserHandler();
         public Func<TenantCreationDialogResult?> ShowNewTenantHandler { get; set; } = () => null;
         public TenantCreationDialogResult? ShowNewTenantWindow() => ShowNewTenantHandler();
     }
@@ -3230,7 +3484,7 @@ public sealed class InvoiceContextIsolationTests
         public void RaiseTokenChanged(long sessionVersion) => TokenChanged?.Invoke(this, new TokenChangedEventArgs(sessionVersion));
     }
 
-    private static class WpfTestDispatcher
+    internal static class WpfTestDispatcher
     {
         private static readonly Lazy<Dispatcher> SharedDispatcher = new(StartDispatcher);
 

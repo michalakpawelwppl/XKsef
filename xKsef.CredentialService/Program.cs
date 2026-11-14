@@ -115,6 +115,7 @@ builder.Services.AddScoped<IKsefCertificateAuthenticationService, KsefCertificat
 
 var app = builder.Build();
 
+if (app.Configuration.GetValue("Ksef:WarmupOnStartup", true))
 using (var scope = app.Services.CreateScope())
 {
     var cryptographyService = scope.ServiceProvider.GetRequiredService<ICryptographyService>();

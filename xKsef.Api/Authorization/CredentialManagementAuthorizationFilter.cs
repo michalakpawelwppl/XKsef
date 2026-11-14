@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using xKsef.Application.Tenants;
@@ -38,9 +38,7 @@ public sealed class CredentialManagementAuthorizationFilter : IAsyncAuthorizatio
             return;
         }
 
-        IReadOnlyList<string> roles = await _tenantAccessService.GetRolesAsync(userId, tenantId, context.HttpContext.RequestAborted);
-
-        if (!roles.Contains("Admin", StringComparer.OrdinalIgnoreCase))
+        if (!await _tenantAccessService.HasAccessAsync(userId, tenantId, context.HttpContext.RequestAborted))
         {
             context.Result = new ForbidResult();
             return;

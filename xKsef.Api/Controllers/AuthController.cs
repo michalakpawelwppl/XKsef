@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using xKsef.Api.Authentication;
 using xKsef.Api.Contracts.Authentication;
 using xKsef.Application.Authentication;
 using xKsef.Contracts.Authentication;
@@ -13,11 +14,24 @@ public sealed class AuthController : ControllerBase
 {
     private readonly IUserAuthenticationService _authenticationService;
     private readonly IJwtTokenService _jwtTokenService;
+    private readonly IUserCreationService _userCreationService;
 
-    public AuthController(IUserAuthenticationService authenticationService,IJwtTokenService jwtTokenService)
+    public AuthController(IUserAuthenticationService authenticationService,IJwtTokenService jwtTokenService, IUserCreationService userCreationService)
     {
         _authenticationService = authenticationService;
         _jwtTokenService = jwtTokenService;
+        _userCreationService = userCreationService;
+    }
+
+    [HttpPost("register")]
+    [AllowAnonymous]
+    [EnableRateLimiting(RegistrationRateLimiting.PolicyName)]
+    public async Task<IActionResult> RegisterAsync([FromBody] RegisterRequest request, CancellationToken cancellationToken)
+    {
+        CreateUserResult result = await _userCreationService.CreateAsync(request.Login.Trim(), request.Email.Trim(), request.Password, cancellationToken);
+        if (result.UserId is null)
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]> { ["Identity"] = result.Errors.ToArray() }));
+        return StatusCode(StatusCodes.Status201Created, new RegisterResponse(result.UserId));
     }
 
     [HttpPost("login")]

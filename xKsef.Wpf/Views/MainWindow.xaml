@@ -71,7 +71,7 @@
 
                 <Menu Background="Transparent" VerticalAlignment="Center">
                     <MenuItem Header="Nowy tenant" Command="{Binding NewTenantCommand}" IsEnabled="{Binding IsLoggedIn}" Padding="12,8"/>
-                    <MenuItem Header="Nowy użytkownik" Command="{Binding NewUserCommand}" IsEnabled="{Binding IsLoggedIn}" Padding="12,8"/>
+                    <MenuItem Header="Użytkownicy tenanta" Command="{Binding ManageTenantUsersCommand}" IsEnabled="{Binding CanManageTenantUsers}" Padding="12,8"/>
                     <MenuItem Header="KSeF" IsEnabled="{Binding IsLoggedIn}" Padding="12,8">
                         <MenuItem Header="Konfiguruj token KSeF" Command="{Binding ConfigureKsefTokenCommand}"/>
                         <MenuItem Header="Konfiguruj certyfikat KSeF" Command="{Binding ConfigureKsefCertificateCommand}"/>
@@ -95,18 +95,38 @@
                 <TextBlock Text="Podmiot:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <ComboBox Width="250" Height="30" ItemsSource="{Binding AvailableTenants}" SelectedItem="{Binding SelectedTenant, Mode=TwoWay}" DisplayMemberPath="Name" IsEnabled="{Binding IsLoggedIn}" VerticalContentAlignment="Center" Margin="0,0,10,0"/>
 
-                <Button Content="Zaloguj" Width="100" Height="30" Margin="5,0" Command="{Binding LoginCommand}">
-                    <Button.Style>
-                        <Style TargetType="Button">
-                            <Setter Property="Visibility" Value="Visible"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsLoggedIn}" Value="True">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Button.Style>
-                </Button>
+                <Grid>
+                    <ComboBox x:Name="AccountActionSelector" ToolTip="Zaloguj się lub utwórz nowe konto" Width="200" Height="30" Margin="5,0" SelectedIndex="{Binding SelectedAccountAction, Mode=TwoWay}" VerticalContentAlignment="Center">
+                        <ComboBoxItem Content="Zaloguj"/>
+                        <ComboBoxItem Content="Utwórz nowego użytkownika"/>
+                        <ComboBox.Style>
+                            <Style TargetType="ComboBox">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLoggedIn}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ComboBox.Style>
+                    </ComboBox>
+                    <TextBlock x:Name="AccountActionPlaceholder" Text="Zaloguj / nowe konto" Margin="14,0,26,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsLoggedIn}" Value="False"/>
+                                            <Condition Binding="{Binding SelectedIndex, ElementName=AccountActionSelector}" Value="-1"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
 
                 <Button Content="Wyloguj" Width="100" Height="30" Margin="5,0" Command="{Binding LogoutCommand}">
                     <Button.Style>

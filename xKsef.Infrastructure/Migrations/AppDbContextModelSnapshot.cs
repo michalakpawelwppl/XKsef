@@ -17,7 +17,7 @@ namespace xKsef.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.13")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -366,6 +366,60 @@ namespace xKsef.Infrastructure.Migrations
                     b.ToTable("UserTenants", (string)null);
                 });
 
+            modelBuilder.Entity("xKsef.Infrastructure.Authentication.BrowserSession", b =>
+                {
+                    b.Property<string>("IdHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<DateTimeOffset>("AbsoluteExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("IdleExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("ProtectedTicket")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<DateTimeOffset>("RenewedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("IdHash");
+
+                    b.HasIndex("AbsoluteExpiresAt");
+
+                    b.HasIndex("IdleExpiresAt");
+
+                    b.HasIndex("UserId", "RevokedAt");
+
+                    b.ToTable("BrowserSessions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BrowserSessions_Lifetime", "[CreatedAt] <= [RenewedAt] AND [RenewedAt] < [IdleExpiresAt] AND [IdleExpiresAt] <= [AbsoluteExpiresAt]");
+
+                            t.HasCheckConstraint("CK_BrowserSessions_Payload", "DATALENGTH([ProtectedTicket]) > 0");
+
+                            t.HasCheckConstraint("CK_BrowserSessions_Version", "[Version] <> '00000000-0000-0000-0000-000000000000'");
+                        });
+                });
+
             modelBuilder.Entity("xKsef.Infrastructure.Identity.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
@@ -421,7 +475,9 @@ namespace xKsef.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("NormalizedEmail")
-                        .HasDatabaseName("EmailIndex");
+                        .IsUnique()
+                        .HasDatabaseName("EmailIndex")
+                        .HasFilter("[NormalizedEmail] IS NOT NULL");
 
                     b.HasIndex("NormalizedUserName")
                         .IsUnique()
@@ -529,6 +585,15 @@ namespace xKsef.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("xKsef.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("xKsef.Infrastructure.Authentication.BrowserSession", b =>
+                {
                     b.HasOne("xKsef.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")

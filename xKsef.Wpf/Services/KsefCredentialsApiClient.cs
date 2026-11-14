@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Net.Http.Json;
 using xKsef.Application.Credentials;
 using xKsef.Wpf.Http;
@@ -39,7 +39,7 @@ public sealed class KsefCredentialsApiClient : IKsefCredentialsApiClient
 
     public async Task<IReadOnlyList<KsefCertificateInfo>> GetCertificatesAsync(ApiRequestContext context)
     {
-        using var request = CreateRequest(HttpMethod.Get, "api/ksef/credentials/certificates", context);
+        using var request = CreateRequest(HttpMethod.Get, "api/ksef/credentials/certificates", context, ApiRequestScope.User);
         using var response = await _httpClient.SendAsync(request, context.CancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<KsefCertificateInfo[]>(cancellationToken: context.CancellationToken)
@@ -47,7 +47,7 @@ public sealed class KsefCredentialsApiClient : IKsefCredentialsApiClient
     }
     public async Task<KsefTokenInfo> GetCertificateInfoAsync(ApiRequestContext context)
     {
-        using HttpRequestMessage request = CreateRequest(HttpMethod.Get, "api/ksef/credentials/certificate-info", context);
+        using HttpRequestMessage request = CreateRequest(HttpMethod.Get, "api/ksef/credentials/certificate-info", context, ApiRequestScope.User);
         using HttpResponseMessage response = await _httpClient.SendAsync(request, context.CancellationToken);
 
         response.EnsureSuccessStatusCode();
@@ -63,15 +63,15 @@ public sealed class KsefCredentialsApiClient : IKsefCredentialsApiClient
         public Guid CredentialId { get; set; }
     }
 
-    private static HttpRequestMessage CreateRequest(HttpMethod method, string url, ApiRequestContext context)
+    private static HttpRequestMessage CreateRequest(HttpMethod method, string url, ApiRequestContext context, ApiRequestScope scope = ApiRequestScope.TenantHeader)
     {
         context.CancellationToken.ThrowIfCancellationRequested();
 
-        if (context.Scope != ApiRequestScope.TenantHeader)
-            throw new InvalidOperationException("KSeF credential requests require the TenantHeader scope.");
+        if (context.Scope != scope)
+            throw new InvalidOperationException($"KSeF credential request requires the {scope} scope.");
         if (string.IsNullOrWhiteSpace(context.AccessToken))
             throw new InvalidOperationException("KSeF credential requests require an access token.");
-        if (context.TenantId is not Guid tenantId || tenantId == Guid.Empty)
+        if (scope == ApiRequestScope.TenantHeader && (context.TenantId is not Guid tenantId || tenantId == Guid.Empty))
             throw new InvalidOperationException("KSeF credential requests require a tenant ID.");
 
         var request = new HttpRequestMessage(method, url);

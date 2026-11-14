@@ -136,15 +136,41 @@ public sealed class KsefCredentialPreferenceTests
         Assert.Empty(client.Used);
     }
 
-    [Fact]
-    public void ExistingAuthorizationFiltersRemainOnCertificateManagementAndAuthentication()
+    [Theory]
+    [InlineData(typeof(KsefCredentialsController), "SaveTokenAsync", true)]
+    [InlineData(typeof(KsefCredentialsController), "GetTokenInfoAsync", true)]
+    [InlineData(typeof(KsefCredentialsController), "GetCertificatesAsync", false)]
+    [InlineData(typeof(KsefCredentialsController), "GetCertificateInfoAsync", false)]
+    [InlineData(typeof(KsefAuthenticationController), "SaveCertificateAsync", false)]
+    [InlineData(typeof(KsefAuthenticationController), "AuthenticateTokenAsync", true)]
+    [InlineData(typeof(KsefAuthenticationController), "AuthenticateCertificateAsync", true)]
+    public void ContextAuthorizationAppliesOnlyToContextDependentActions(Type controller, string method, bool needsTenant)
     {
-        var management = typeof(KsefCredentialsController).GetCustomAttributes(typeof(ServiceFilterAttribute), true).Cast<ServiceFilterAttribute>();
-        Assert.Contains(management, a => a.ServiceType == typeof(xKsef.Api.Authorization.CredentialManagementAuthorizationFilter));
-        var auth = typeof(KsefAuthenticationController).GetCustomAttributes(typeof(ServiceFilterAttribute), true).Cast<ServiceFilterAttribute>();
-        Assert.Contains(auth, a => a.ServiceType == typeof(xKsef.Api.Authorization.TenantAuthorizationFilter));
+        Assert.Empty(controller.GetCustomAttributes(typeof(ServiceFilterAttribute), true));
+        var filters = controller.GetMethod(method)!.GetCustomAttributes(typeof(ServiceFilterAttribute), true);
+        Assert.Equal(needsTenant, filters.Length > 0);
+        Assert.NotEmpty(controller.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true));
     }
 
+    [Fact]
+    public async Task CertificateCanBeSavedAndListedWithoutAnyTenant()
+    {
+        using var store = new KsefSessionTestStore();
+        await using var db = store.CreateContext();
+        var service = store.CreateService(db);
+        var bridge = new Bridge(service);
+        var auth = new KsefAuthenticationController(null!, null!, null!, null!, bridge);
+        Authorize(auth);
+        Assert.IsType<OkObjectResult>(await auth.SaveCertificateAsync(new("pem", "key", "password"), default));
+        var controller = new KsefCredentialsController(bridge, null!);
+        Authorize(controller);
+        var result = await controller.GetCertificatesAsync(default);
+        var own = Assert.IsAssignableFrom<IReadOnlyList<KsefCertificateInfo>>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Single(own);
+        controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "other") }, "JWT"));
+        var other = await controller.GetCertificatesAsync(default);
+        Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<KsefCertificateInfo>>(Assert.IsType<OkObjectResult>(other.Result).Value));
+    }
     private static void Authorize(ControllerBase controller, Guid? tenant = null)
     {
         controller.ControllerContext = new() { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, User) }, "JWT-test")) } };
@@ -195,8 +221,8 @@ public sealed class KsefCredentialPreferenceTests
         public Task<KsefAccessTokenResponse> GetAccessTokenAsync(Guid id, Guid tenant, string user, string nip, CancellationToken cancellationToken = default) { Used.Add((id, tenant, "Access")); return Task.FromResult(new KsefAccessTokenResponse("access", DateTimeOffset.UtcNow.AddHours(1))); }
         public Task<KsefTokenInfo> GetCertificateInfoAsync(string user, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Automatic certificate selection is forbidden.");
         public Task<KsefTokenInfo> GetTokenInfoAsync(Guid tenant, string user, string nip, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Automatic token selection is forbidden.");
-        public Task<Guid> SaveCertificateAsync(string user, string cert, string key, string password, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<Guid> SaveCertificateAsync(string user, string cert, string key, string password, CancellationToken cancellationToken = default) => service.SaveAsync(null, user, "Certificate", [1], cancellationToken);
         public Task<Guid> SaveTokenAsync(Guid tenant, string user, string token, string nip, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<KsefCertificateInfo>> GetCertificatesAsync(string user, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public async Task<IReadOnlyList<KsefCertificateInfo>> GetCertificatesAsync(string user, CancellationToken cancellationToken = default) => (await service.GetCertificatesAsync(user, cancellationToken)).Select(c => new KsefCertificateInfo(c.CredentialId, c.Name, c.CreatedAt)).ToArray();
     }
 }

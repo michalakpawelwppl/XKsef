@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using xKsef.Application.Exceptions;
 using xKsef.Application.Invoices;
@@ -10,6 +10,7 @@ using xKsef.Infrastructure.Persistence;
 
 namespace xKsef.Tests.Integration;
 
+[Collection(LocalDbIntegrationCollection.Name)]
 public sealed class InvoiceImportTransactionTests
 {
     [Fact]

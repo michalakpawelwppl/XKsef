@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using xKsef.Api.Authorization;
@@ -12,7 +12,6 @@ namespace xKsef.Api.Controllers;
 
 [ApiController]
 [Authorize]
-[ServiceFilter(typeof(TenantAuthorizationFilter))]
 [Route("api/ksef/authentication")]
 public sealed class KsefAuthenticationController : ControllerBase
 {
@@ -31,8 +30,8 @@ public sealed class KsefAuthenticationController : ControllerBase
         _credentialServiceClient = credentialServiceClient;
     }
 
-
     [HttpPost("prepare")]
+    [ServiceFilter(typeof(TenantAuthorizationFilter))]
     public async Task<IActionResult> PrepareAsync(CancellationToken cancellationToken)
     {
         if (HttpContext.Items["TenantId"] is not Guid tenantId)
@@ -68,6 +67,7 @@ public sealed class KsefAuthenticationController : ControllerBase
     }
 
     [HttpPost("submit")]
+    [ServiceFilter(typeof(TenantAuthorizationFilter))]
     public async Task<IActionResult> SubmitAsync([FromBody] SubmitKsefAuthenticationRequest request, CancellationToken cancellationToken)
     {
         if (HttpContext.Items["TenantId"] is not Guid tenantId)
@@ -101,6 +101,7 @@ public sealed class KsefAuthenticationController : ControllerBase
     }
 
     [HttpPost("authenticate-token")]
+    [ServiceFilter(typeof(TenantAuthorizationFilter))]
     public async Task<IActionResult> AuthenticateTokenAsync([FromBody] AuthenticatePreferredKsefCredentialRequest request, CancellationToken cancellationToken)
     {
         if (HttpContext.Items["TenantId"] is not Guid tenantId || tenantId == Guid.Empty) return Forbid();
@@ -121,15 +122,10 @@ public sealed class KsefAuthenticationController : ControllerBase
         return Ok(new { Authenticated = true });
     }
 
-  
-
     [HttpPost("certificate")]
     [Authorize]
-    [ServiceFilter(typeof(TenantAuthorizationFilter))]
     public async Task<IActionResult> SaveCertificateAsync([FromBody] SaveKsefCertificateRequest request, CancellationToken cancellationToken)
     {
-        if (!HttpContext.Items.TryGetValue("TenantId", out var tenantValue) || tenantValue is not Guid tenantId) return BadRequest("Nie wybrano tenanta.");
-
         string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrWhiteSpace(userId)) return Unauthorized();
 
@@ -144,6 +140,7 @@ public sealed class KsefAuthenticationController : ControllerBase
     }
 
     [HttpPost("authenticate-certificate")]
+    [ServiceFilter(typeof(TenantAuthorizationFilter))]
     public async Task<IActionResult> AuthenticateCertificateAsync([FromBody] AuthenticatePreferredKsefCredentialRequest request, CancellationToken cancellationToken)
     {
         if (HttpContext.Items["TenantId"] is not Guid tenantId || tenantId == Guid.Empty) return Forbid();

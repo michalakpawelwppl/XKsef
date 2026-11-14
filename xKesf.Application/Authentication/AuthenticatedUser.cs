@@ -2,4 +2,4 @@
 
 public sealed record AuthenticatedUser(
     string Id,
-    string UserName);
+    string UserName, string? SecurityStamp = null);

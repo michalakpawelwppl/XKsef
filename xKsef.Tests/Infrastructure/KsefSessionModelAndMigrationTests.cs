@@ -108,29 +108,17 @@ public sealed class KsefSessionModelAndMigrationTests
     }
 
     [Fact]
-    public void ExistingCredentialColumnsAndSessionIndexRemainUnchanged()
+    public void InitialCreatesOnlyCurrentSourceAndSessionColumns()
     {
-        using var context = CreateContext();
-        var oldCredential = Initialize(context, new ExtendKsefSessionUniqueIndex().TargetModel).FindEntityType(typeof(KsefCredential).FullName!)!;
-        var current = Initialize(context, new AddKsefSessionsAndCredentialMetadata().TargetModel).FindEntityType(typeof(KsefCredential).FullName!)!;
-        foreach (var previous in oldCredential.GetProperties())
-        {
-            var property = current.FindProperty(previous.Name)!;
-            Assert.Equal(previous.ClrType, property.ClrType);
-            Assert.Equal(previous.IsNullable, property.IsNullable);
-            Assert.Equal(previous.GetColumnType(), property.GetColumnType());
-            Assert.Equal(previous.GetMaxLength(), property.GetMaxLength());
-        }
-        Assert.Equal(new[] { "IsActive", "Name" }, current.GetProperties().Select(property => property.Name).Except(oldCredential.GetProperties().Select(property => property.Name)).OrderBy(name => name, StringComparer.Ordinal));
-        Assert.Equal(typeof(Guid), current.FindProperty(nameof(KsefCredential.TenantId))!.ClrType);
-        Assert.NotNull(current.FindProperty("SourceCredentialId"));
-        Assert.NotNull(current.FindProperty("ValidUntil"));
-        var oldIndex = Assert.Single(oldCredential.GetIndexes());
-        var index = Assert.Single(current.GetIndexes());
-        Assert.Equal(oldIndex.Properties.Select(property => property.Name), index.Properties.Select(property => property.Name));
-        Assert.Equal(oldIndex.GetFilter(), index.GetFilter());
-        Assert.Equal(oldIndex.IsUnique, index.IsUnique);
-        Assert.Equal(oldCredential.FindPrimaryKey()!.Properties.Select(property => property.Name), current.FindPrimaryKey()!.Properties.Select(property => property.Name));
+        var migration = new InitialCreate();
+        var source = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>(), table => table.Name == "KsefCredentials");
+        Assert.Equal(13, source.Columns.Count);
+        Assert.True(Assert.Single(source.Columns, column => column.Name == "TenantId").IsNullable);
+        Assert.True(Assert.Single(source.Columns, column => column.Name == "ContextNip").IsNullable);
+        Assert.False(Assert.Single(source.Columns, column => column.Name == "UserId").IsNullable);
+        Assert.DoesNotContain(source.Columns, column => column.Name is "SourceCredentialId" or "ValidUntil");
+        Assert.Equal(7, source.CheckConstraints.Count);
+        Assert.Equal(new[] { "Id", "UserId" }, Assert.Single(source.UniqueConstraints).Columns);
     }
 
     [Fact]
@@ -150,32 +138,25 @@ public sealed class KsefSessionModelAndMigrationTests
     }
 
     [Fact]
-    public void MigrationUpOnlyAddsTheSessionTableCredentialMetadataAndOwnerKey()
+    public void InitialUpCreatesSourcesSessionsAndTheirSecurityConstraints()
     {
-        AssertAdditiveOperations(new AddKsefSessionsAndCredentialMetadata().UpOperations);
+        AssertInitialOperations(new InitialCreate().UpOperations);
     }
 
     [Fact]
-    public void CompleteDifferenceFromPreviousModelIsAdditive()
+    public void InitialIsTheOnlyMigrationAndMatchesCreationFromEmpty()
     {
         using var context = CreateContext();
-        var previous = Initialize(context, new ExtendKsefSessionUniqueIndex().TargetModel);
-        var current = Initialize(context, new AddKsefSessionsAndCredentialMetadata().TargetModel);
-        AssertAdditiveOperations(context.GetService<IMigrationsModelDiffer>().GetDifferences(previous.GetRelationalModel(), current.GetRelationalModel()));
+        Assert.EndsWith("_InitialCreate", Assert.Single(context.GetService<IMigrationsAssembly>().Migrations).Key);
+        var current = context.GetService<IDesignTimeModel>().Model;
+        AssertInitialOperations(context.GetService<IMigrationsModelDiffer>().GetDifferences(null, current.GetRelationalModel()));
     }
 
     [Fact]
-    public void MigrationDownOnlyReversesItsOwnAdditions()
+    public void InitialDownDropsSessionsBeforeTheirSourceCredentials()
     {
-        var operations = new AddKsefSessionsAndCredentialMetadata().DownOperations;
-        Assert.Equal(4, operations.Count);
-        Assert.Equal("KsefSessions", Assert.IsType<DropTableOperation>(operations[0]).Name);
-        var key = Assert.IsType<DropUniqueConstraintOperation>(operations[1]);
-        Assert.Equal("KsefCredentials", key.Table);
-        Assert.Equal("AK_KsefCredentials_Id_UserId", key.Name);
-        var columns = operations.Skip(2).Select(operation => Assert.IsType<DropColumnOperation>(operation)).ToArray();
-        Assert.Equal(new[] { "IsActive", "Name" }, columns.Select(column => column.Name).OrderBy(name => name, StringComparer.Ordinal));
-        Assert.All(columns, column => Assert.Equal("KsefCredentials", column.Table));
+        var operations = new InitialCreate().DownOperations;
+        Assert.Equal(new[] { "KsefSessions", "KsefCredentials" }, operations.Select(operation => Assert.IsType<DropTableOperation>(operation).Name));
     }
 
     [Fact]
@@ -184,7 +165,7 @@ public sealed class KsefSessionModelAndMigrationTests
         using var context = CreateContext();
         var differ = context.GetService<IMigrationsModelDiffer>();
         var current = context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
-        foreach (IModel model in new[] { new RebuildKsefSourceCredentials().TargetModel, context.GetService<IMigrationsAssembly>().ModelSnapshot!.Model })
+        foreach (IModel model in new[] { new InitialCreate().TargetModel, context.GetService<IMigrationsAssembly>().ModelSnapshot!.Model })
             Assert.Empty(differ.GetDifferences(Initialize(context, model).GetRelationalModel(), current));
         Assert.False(context.Database.HasPendingModelChanges());
     }
@@ -193,7 +174,7 @@ public sealed class KsefSessionModelAndMigrationTests
     public void SqlGenerationContainsConstraintsWithoutChangingExistingDataOrColumns()
     {
         using var context = CreateContext();
-        var migration = new AddKsefSessionsAndCredentialMetadata();
+        var migration = new InitialCreate();
         string sql = string.Join(Environment.NewLine, context.GetService<IMigrationsSqlGenerator>()
             .Generate(migration.UpOperations, Initialize(context, migration.TargetModel)).Select(command => command.CommandText));
         Assert.Contains("CREATE TABLE [KsefSessions]", sql);
@@ -217,34 +198,30 @@ public sealed class KsefSessionModelAndMigrationTests
         Assert.Equal(ConnectionState.Closed, context.Database.GetDbConnection().State);
     }
 
-    private static void AssertAdditiveOperations(IReadOnlyList<MigrationOperation> operations)
+    private static void AssertInitialOperations(IReadOnlyList<MigrationOperation> operations)
     {
         Assert.Equal(6, operations.Count);
-        var columns = operations.OfType<AddColumnOperation>().OrderBy(column => column.Name, StringComparer.Ordinal).ToArray();
-        Assert.Equal(new[] { "IsActive", "Name" }, columns.Select(column => column.Name));
-        Assert.All(columns, column => Assert.Equal("KsefCredentials", column.Table));
-        Assert.Equal(true, columns[0].DefaultValue);
-        Assert.Equal(string.Empty, columns[1].DefaultValue);
-        var ownerKey = Assert.Single(operations.OfType<AddUniqueConstraintOperation>());
-        Assert.Equal("KsefCredentials", ownerKey.Table);
-        Assert.Equal(new[] { "Id", "UserId" }, ownerKey.Columns);
-        var table = Assert.Single(operations.OfType<CreateTableOperation>());
-        Assert.Equal("KsefSessions", table.Name);
-        Assert.Equal(13, table.Columns.Count);
-        Assert.All(table.Columns, column => Assert.False(column.IsNullable));
-        Assert.Equal(7, table.CheckConstraints.Count);
-        var foreignKey = Assert.Single(table.ForeignKeys);
+        var tables = operations.OfType<CreateTableOperation>().ToArray();
+        Assert.Equal(new[] { "KsefCredentials", "KsefSessions" }, tables.Select(table => table.Name));
+        Assert.All(tables, table => Assert.Equal(7, table.CheckConstraints.Count));
+        var source = tables[0];
+        Assert.Equal(true, Assert.Single(source.Columns, column => column.Name == "IsActive").DefaultValue);
+        Assert.Equal(string.Empty, Assert.Single(source.Columns, column => column.Name == "Name").DefaultValue);
+        Assert.Equal(new[] { "Id", "UserId" }, Assert.Single(source.UniqueConstraints).Columns);
+        var session = tables[1];
+        Assert.Equal(13, session.Columns.Count);
+        Assert.All(session.Columns, column => Assert.False(column.IsNullable));
+        var foreignKey = Assert.Single(session.ForeignKeys);
         Assert.Equal(new[] { "CredentialId", "UserId" }, foreignKey.Columns);
         Assert.Equal("KsefCredentials", foreignKey.PrincipalTable);
         Assert.Equal(new[] { "Id", "UserId" }, foreignKey.PrincipalColumns);
-        Assert.Equal(Microsoft.EntityFrameworkCore.Migrations.ReferentialAction.Restrict, foreignKey.OnDelete);
+        Assert.Equal(ReferentialAction.Restrict, foreignKey.OnDelete);
         var indexes = operations.OfType<CreateIndexOperation>().ToArray();
-        Assert.Equal(2, indexes.Length);
-        Assert.All(indexes, index => Assert.Equal("KsefSessions", index.Table));
-        Assert.Contains(indexes, index => index.IsUnique && index.Columns.SequenceEqual(new[] { "UserId", "TenantId", "CredentialId", "ContextNip" }));
-        Assert.All(operations, operation => Assert.True(operation is AddColumnOperation or AddUniqueConstraintOperation or CreateTableOperation or CreateIndexOperation));
+        Assert.Equal(4, indexes.Length);
+        Assert.Equal(2, indexes.Count(index => index.Table == "KsefCredentials" && !index.IsUnique));
+        Assert.Contains(indexes, index => index.Table == "KsefSessions" && index.IsUnique && index.Columns.SequenceEqual(new[] { "UserId", "TenantId", "CredentialId", "ContextNip" }));
+        Assert.All(operations, operation => Assert.True(operation is CreateTableOperation or CreateIndexOperation));
     }
-
     private static IEntityType Entity<T>(CredentialsDbContext context) => context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(T))!;
     private static IModel Initialize(CredentialsDbContext context, IModel model) => context.GetService<IModelRuntimeInitializer>().Initialize(model, designTime: true);
     private static CredentialsDbContext CreateContext() => new CredentialsDbContextFactory().CreateDbContext([]);
