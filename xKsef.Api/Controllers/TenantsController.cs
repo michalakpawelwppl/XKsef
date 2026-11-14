@@ -74,7 +74,10 @@ public sealed class TenantsController : ControllerBase
 
         if (request.CredentialId.HasValue)
         {
-            string? credentialType = await _credentialServiceClient.GetCredentialTypeAsync(request.CredentialId.Value, tenantId, userId, cancellationToken);
+            var taxEntity = await _tenantService.GetTaxEntityAsync(tenantId, cancellationToken);
+            if (taxEntity is null) return Forbid();
+            if (taxEntity.Nip is null || taxEntity.Nip.Length != 10 || !taxEntity.Nip.All(char.IsAsciiDigit)) return Problem("Nieprawidłowy NIP podmiotu podatkowego.", statusCode: 500);
+            string? credentialType = await _credentialServiceClient.GetCredentialTypeAsync(request.CredentialId.Value, tenantId, userId, taxEntity.Nip, cancellationToken);
 
             if (credentialType == null) return BadRequest("Poświadczenie KSeF nie istnieje lub nie należy do wskazanego użytkownika i tenanta.");
         }

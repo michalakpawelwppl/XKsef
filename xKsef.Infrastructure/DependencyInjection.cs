@@ -28,15 +28,12 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddKsefInfrastructure(this IServiceCollection services,IConfiguration configuration)
     {
-        var ksefOptions = configuration
-            .GetSection(KsefOptions.SectionName)
-            .Get<KsefOptions>()
-            ?? throw new InvalidOperationException(
-                "Brak konfiguracji Ksef.");
+        string ksefBaseUrl = KsefEnvironmentResolver.ResolveBaseUrl(configuration);
         services.AddScoped<KsefAuthenticationService>();
         services.AddSingleton<KsefTokenStore>();
         services.AddScoped<KsefTokenProvider>();
         services.Configure<KsefOptions>(configuration.GetSection(KsefOptions.SectionName));
+        services.PostConfigure<KsefOptions>(options => options.BaseUrl = ksefBaseUrl);
         services.AddScoped<KsefAuthenticationXmlValidator>();
         services.AddScoped<KsefInvoiceService>(provider =>
         {
@@ -58,14 +55,9 @@ public static class DependencyInjection
         services.AddScoped<IInvoiceService>(
     provider => provider.GetRequiredService<KsefInvoiceService>());
 
-        if (string.IsNullOrWhiteSpace(ksefOptions.BaseUrl))
-        {
-            throw new InvalidOperationException("Nie skonfigurowano adresu KSeF API.");
-        }
-
         services.AddKSeFClient(options =>
         {
-            options.BaseUrl = ksefOptions.BaseUrl;
+            options.BaseUrl = ksefBaseUrl;
         });
 
         services.AddCryptographyClient();
@@ -73,6 +65,7 @@ public static class DependencyInjection
         services.AddMemoryCache();
         services.AddSingleton<PendingKsefAuthenticationStore>();
         services.AddScoped<ICredentialServiceClient, CredentialServiceClient>();
+        services.AddTransient<CredentialServiceEnvironmentHandler>();
 
         return services;
     }

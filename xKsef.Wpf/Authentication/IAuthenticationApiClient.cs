@@ -8,7 +8,7 @@ public interface IAuthenticationApiClient
 {
     Task<UserCreationResult> CreateUserAsync(ApiRequestContext context, string login, string email, string password);
     Task<LoginResponse?> LoginAsync(ApiRequestContext context, string login, string password);
-    Task AuthenticateKsefTokenAsync(ApiRequestContext context);
+    Task AuthenticateKsefTokenAsync(ApiRequestContext context, Guid credentialId);
     Task<Guid> SaveKsefCertificateAsync(ApiRequestContext context, string certificatePem, string encryptedPrivateKeyPem, string password);
-    Task AuthenticateKsefCertificateAsync(ApiRequestContext context);
+    Task AuthenticateKsefCertificateAsync(ApiRequestContext context, Guid credentialId);
 }

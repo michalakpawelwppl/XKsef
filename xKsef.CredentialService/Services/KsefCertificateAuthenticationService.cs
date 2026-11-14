@@ -19,7 +19,7 @@ public sealed class KsefCertificateAuthenticationService : IKsefCertificateAuthe
     }
     private async Task<string> SignAuthenticationXmlAsync(Guid credentialId, Guid tenantId, string userId, string xml, CancellationToken cancellationToken = default)
     {
-        using var certificate = await _certificateService.GetCertificateAsync(credentialId, tenantId, userId, cancellationToken);
+        using var certificate = await _certificateService.GetCertificateAsync(credentialId, userId, cancellationToken);
 
         if (certificate == null) throw new InvalidOperationException("Nie znaleziono certyfikatu KSeF.");
         if (!certificate.HasPrivateKey) throw new InvalidOperationException("Certyfikat KSeF nie zawiera klucza prywatnego.");

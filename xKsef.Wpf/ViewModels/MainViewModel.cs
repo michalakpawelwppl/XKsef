@@ -91,6 +91,12 @@ public partial class MainViewModel : ObservableObject
 
     public ObservableCollection<TenantDto> AvailableTenants { get; } = new();
 
+    private readonly List<KsefCredentialOption> _certificateOptions = new();
+    private long _certificateListOperationId;
+    private long _credentialOperationId;
+    private long _preferenceReadOperationId;
+    private long? _credentialLoadingOwner;
+
     public ObservableCollection<KsefCredentialOption> AvailableKsefCredentials { get; } = new();
 
     [ObservableProperty]
@@ -191,20 +197,25 @@ public partial class MainViewModel : ObservableObject
 
         if (context.TenantId is null || string.IsNullOrWhiteSpace(context.AccessToken)) return;
 
+        long operationId = ++_certificateListOperationId;
         try
         {
-            KsefTokenInfo certificateInfo = await _ksefCredentialsApiClient.GetCertificateInfoAsync(context);
+            var certificates = await _ksefCredentialsApiClient.GetCertificatesAsync(context);
+            if (operationId != _certificateListOperationId) return;
             if (!IsCurrentContext(context)) return;
 
-            HasKsefCertificate = certificateInfo.Exists;
-            KsefCertificateCredentialId = certificateInfo.CredentialId;
+            _certificateOptions.Clear();
+            foreach (var certificate in certificates)
+                _certificateOptions.Add(new KsefCredentialOption { CredentialId = certificate.CredentialId, CredentialType = "Certificate", Name = CertificateLabel(certificate.CredentialId, certificate.Name) });
+            HasKsefCertificate = _certificateOptions.Count > 0;
+            KsefCertificateCredentialId = _certificateOptions.Count == 1 ? _certificateOptions[0].CredentialId : null;
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            if (IsCurrentContext(context))
+            if (IsCurrentContext(context) && operationId == _certificateListOperationId)
                 Status = $"Błąd sprawdzania certyfikatu KSeF: {ex.Message}";
         }
     }
@@ -243,16 +254,18 @@ public partial class MainViewModel : ObservableObject
 
     private void RefreshKsefCredentials()
     {
+        Guid? pendingSelection = SelectedKsefCredential?.CredentialId;
         AvailableKsefCredentials.Clear();
         SelectedKsefCredential = null;
 
         if (HasKsefToken && KsefCredentialId is Guid tokenId)
-            AvailableKsefCredentials.Add(new KsefCredentialOption { CredentialId = tokenId, Name = "Token KSeF" });
+            AvailableKsefCredentials.Add(new KsefCredentialOption { CredentialId = tokenId, CredentialType = "Token", Name = "Token KSeF" });
 
-        if (HasKsefCertificate && KsefCertificateCredentialId is Guid certificateId)
-            AvailableKsefCredentials.Add(new KsefCredentialOption { CredentialId = certificateId, Name = "Certyfikat KSeF" });
+        foreach (var certificate in _certificateOptions) AvailableKsefCredentials.Add(certificate);
 
-        SelectedKsefCredential = AvailableKsefCredentials.FirstOrDefault(x => x.CredentialId == PreferredKsefCredentialId);
+        SelectedKsefCredential = AvailableKsefCredentials.FirstOrDefault(x => x.CredentialId == (pendingSelection ?? PreferredKsefCredentialId));
+        if (PreferredKsefCredentialId.HasValue && SelectedKsefCredential is null)
+            Status = "Zapisane poświadczenie jest niedostępne. Wybierz dostępne poświadczenie i zapisz wybór.";
     }
 
     private async Task CheckPreferredKsefCredentialAsync(ApiRequestContext context)
@@ -262,16 +275,17 @@ public partial class MainViewModel : ObservableObject
         if (context.TenantId is not Guid tenantId)
             return;
 
+        long operationId = ++_preferenceReadOperationId;
         try
         {
-            Guid? preferredCredentialId = await _tenantApiClient.GetPreferredKsefCredentialIdAsync(tenantId);
-            if (!IsCurrentContext(context)) return;
+            Guid? preferredCredentialId = await _tenantApiClient.GetPreferredKsefCredentialIdAsync(context with { Scope = ApiRequestScope.TenantRoute });
+            if (!IsCurrentContext(context) || operationId != _preferenceReadOperationId) return;
 
             PreferredKsefCredentialId = preferredCredentialId;
         }
         catch (Exception ex)
         {
-            if (IsCurrentContext(context))
+            if (IsCurrentContext(context) && operationId == _preferenceReadOperationId)
                 Status = $"Błąd odczytu preferowanego poświadczenia KSeF: {ex.Message}";
         }
     }
@@ -560,6 +574,7 @@ public partial class MainViewModel : ObservableObject
         if (!IsLoggedIn) { Status = "Najpierw zaloguj się do aplikacji."; return; }
         var snapshot = CaptureContext(ApiRequestScope.TenantHeader);
         if (snapshot is not ApiRequestContext context || !HasTenantHeaderContext(context) || !IsCurrentContext(context)) return;
+        if (!TrySavedCredential(null, out _)) return;
         if (DateFrom.Date > DateTo.Date) { Status = "Data początkowa nie może być późniejsza niż końcowa."; return; }
         var direction = SelectedTabIndex switch { 0 => InvoiceDirection.Sales, 1 => InvoiceDirection.Purchase, _ => throw new InvalidOperationException("Nieznana zakładka faktur.") };
         DateOnly from = DateOnly.FromDateTime(DateFrom);
@@ -683,93 +698,91 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
-    private async Task AuthenticateKsefTokenAsync()
-    {
-        if (!IsLoggedIn || !_tenantContext.HasTenant)
-        {
-            Status = "Najpierw zaloguj się i wybierz podmiot.";
-            return;
-        }
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private Task AuthenticateKsefTokenAsync() => AuthenticatePreferredAsync("Token");
 
-        if (IsLoading) return;
-
-        if (!HasKsefToken || KsefCredentialId is null)
-        {
-            Status = "Najpierw skonfiguruj token KSeF.";
-            return;
-        }
-
-        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
-        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
-
-        try
-        {
-            if (!IsCurrentContext(context)) return;
-
-            IsLoading = true;
-            Status = "Trwa uwierzytelnianie tokenem KSeF...";
-
-            await _authenticationApiClient.AuthenticateKsefTokenAsync(context);
-            if (!IsCurrentContext(context)) return;
-
-            Status = "Uwierzytelnianie tokenem KSeF zakończone pomyślnie.";
-        }
-        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            if (IsCurrentContext(context))
-                Status = $"Błąd uwierzytelniania tokenem KSeF: {ex.Message}";
-        }
-        finally
-        {
-            if (IsCurrentContext(context))
-                IsLoading = false;
-        }
-    }
-
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SavePreferredKsefCredentialAsync()
     {
-        if (!IsLoggedIn || !_tenantContext.HasTenant)
-        {
-            Status = "Najpierw zaloguj się i wybierz podmiot.";
-            return;
-        }
-
-        if (SelectedKsefCredential is null)
-        {
-            Status = "Wybierz token lub certyfikat KSeF.";
-            return;
-        }
-
-        if (IsLoading) return;
-
+        if (!IsLoggedIn || !_tenantContext.HasTenant || IsLoading) return;
+        if (SelectedKsefCredential is not KsefCredentialOption option) { Status = "Wybierz poświadczenie KSeF."; return; }
+        var snapshot = CaptureContext(ApiRequestScope.TenantRoute);
+        if (snapshot is not ApiRequestContext context || !IsCurrentContext(context)) return;
+        _preferenceReadOperationId++; // An older GET cannot overwrite this explicit write.
+        Guid credentialId = option.CredentialId;
+        string name = option.Name;
+        long operationId = ++_credentialOperationId;
+        _credentialLoadingOwner = operationId;
+        IsLoading = true;
         try
         {
-            IsLoading = true;
-
-            Guid tenantId = _tenantContext.TenantId ?? throw new InvalidOperationException("Nie wybrano podmiotu.");
-            Guid credentialId = SelectedKsefCredential.CredentialId;
-
-            await _tenantApiClient.SetPreferredKsefCredentialIdAsync(tenantId, credentialId);
-
+            await _tenantApiClient.SetPreferredKsefCredentialIdAsync(context, credentialId);
+            if (!OwnsCredentialLoading(context, operationId)) return;
             PreferredKsefCredentialId = credentialId;
-
-            Status = $"Zapisano preferowane poświadczenie KSeF: {SelectedKsefCredential.Name}.";
+            Status = $"Zapisano preferowane poświadczenie KSeF: {name}.";
         }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            Status = $"Błąd zapisywania preferowanego poświadczenia KSeF: {ex.Message}";
+            if (OwnsCredentialLoading(context, operationId)) Status = $"Błąd zapisywania preferowanego poświadczenia KSeF: {ex.Message}";
         }
-        finally
-        {
-            IsLoading = false;
-        }
+        finally { FinishCredentialLoading(context, operationId); }
     }
 
+    private async Task AuthenticatePreferredAsync(string type)
+    {
+        if (IsLoading || !IsLoggedIn || !_tenantContext.HasTenant) return;
+        if (!TrySavedCredential(type, out Guid credentialId)) return;
+        var snapshot = CaptureContext(ApiRequestScope.TenantHeader);
+        if (snapshot is not ApiRequestContext context || !IsCurrentContext(context)) return;
+        long operationId = ++_credentialOperationId;
+        _credentialLoadingOwner = operationId;
+        string method = type == "Token" ? "tokenem" : "certyfikatem";
+        IsLoading = true;
+        try
+        {
+            Status = $"Trwa uwierzytelnianie {method} KSeF...";
+            if (type == "Token") await _authenticationApiClient.AuthenticateKsefTokenAsync(context, credentialId);
+            else await _authenticationApiClient.AuthenticateKsefCertificateAsync(context, credentialId);
+            if (OwnsCredentialLoading(context, operationId)) Status = $"Uwierzytelnianie {method} KSeF zakończone pomyślnie.";
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (OwnsCredentialLoading(context, operationId)) Status = $"Błąd uwierzytelniania {method} KSeF: {ex.Message}";
+        }
+        finally { FinishCredentialLoading(context, operationId); }
+    }
+
+    private bool TrySavedCredential(string? type, out Guid credentialId)
+    {
+        credentialId = Guid.Empty;
+        if (SelectedKsefCredential is not KsefCredentialOption selected || PreferredKsefCredentialId != selected.CredentialId ||
+            !AvailableKsefCredentials.Any(c => c.CredentialId == selected.CredentialId && c.CredentialType == selected.CredentialType))
+        {
+            Status = "Wybierz dostępne poświadczenie i jawnie zapisz wybór przed uwierzytelnianiem lub importem.";
+            return false;
+        }
+        if (type is not null && selected.CredentialType != type)
+        {
+            Status = "Zapisana preferencja ma inny typ poświadczenia.";
+            return false;
+        }
+        credentialId = selected.CredentialId;
+        return true;
+    }
+
+    private bool OwnsCredentialLoading(ApiRequestContext context, long operationId) =>
+        IsCurrentContext(context) && _credentialLoadingOwner == operationId && _credentialOperationId == operationId;
+
+    private void FinishCredentialLoading(ApiRequestContext context, long operationId)
+    {
+        if (!OwnsCredentialLoading(context, operationId)) return;
+        _credentialLoadingOwner = null;
+        IsLoading = false;
+    }
+
+    private static string CertificateLabel(Guid id, string name) => string.IsNullOrWhiteSpace(name) ? $"Certyfikat KSeF ({id.ToString("N")[..8]})" : name;
     partial void OnSelectedSalesInvoiceChanged(InvoiceDto? value)
     {
         if (!_isClearingContextDependentState && SelectedTabIndex == 0)
@@ -1016,6 +1029,11 @@ public partial class MainViewModel : ObservableObject
         KsefCredentialId = null;
         HasKsefCertificate = false;
         KsefCertificateCredentialId = null;
+        _certificateOptions.Clear();
+        _certificateListOperationId++;
+        _credentialOperationId++;
+        _credentialLoadingOwner = null;
+        _preferenceReadOperationId++;
         AvailableKsefCredentials.Clear();
         SelectedKsefCredential = null;
         PreferredKsefCredentialId = null;
@@ -1120,6 +1138,8 @@ public partial class MainViewModel : ObservableObject
             Guid credentialId = await _authenticationApiClient.SaveKsefCertificateAsync(context, certificatePem, encryptedPrivateKeyPem, files.Password!);
             if (!IsCurrentContext(context)) return;
 
+            _certificateListOperationId++;
+            _certificateOptions.Add(new KsefCredentialOption { CredentialId = credentialId, CredentialType = "Certificate", Name = CertificateLabel(credentialId, string.Empty) });
             HasKsefCertificate = true;
             KsefCertificateCredentialId = credentialId;
             RefreshKsefCredentials();
@@ -1150,46 +1170,8 @@ public partial class MainViewModel : ObservableObject
         return (certificatePem, encryptedPrivateKeyPem);
     }
 
-    [RelayCommand]
-    private async Task AuthenticateKsefCertificateAsync()
-    {
-        if (!IsLoggedIn || !_tenantContext.HasTenant)
-        {
-            Status = "Najpierw zaloguj się i wybierz podmiot.";
-            return;
-        }
-
-        if (IsLoading) return;
-
-        var contextSnapshot = CaptureContext(ApiRequestScope.TenantHeader);
-        if (contextSnapshot is not ApiRequestContext context || !HasTenantHeaderContext(context)) return;
-
-        try
-        {
-            if (!IsCurrentContext(context)) return;
-
-            IsLoading = true;
-            Status = "Uwierzytelnianie w KSeF za pomocą certyfikatu...";
-
-            await _authenticationApiClient.AuthenticateKsefCertificateAsync(context);
-            if (!IsCurrentContext(context)) return;
-
-            Status = "Uwierzytelnianie certyfikatem KSeF zakończone pomyślnie.";
-        }
-        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            if (IsCurrentContext(context))
-                Status = $"Błąd uwierzytelniania certyfikatem KSeF: {ex.Message}";
-        }
-        finally
-        {
-            if (IsCurrentContext(context))
-                IsLoading = false;
-        }
-    }
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private Task AuthenticateKsefCertificateAsync() => AuthenticatePreferredAsync("Certificate");
 
     public void Cleanup()
     {

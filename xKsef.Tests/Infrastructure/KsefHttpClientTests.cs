@@ -14,7 +14,7 @@ public class KsefHttpClientTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Ksef:BaseUrl"] = "https://example.com"
+                ["Ksef:Environment"] = "TEST"
             })
             .Build();
 

@@ -14,8 +14,13 @@ using xKsef.CredentialService.Cryptography;
 using xKsef.CredentialService.Data;
 using xKsef.CredentialService.Security;
 using xKsef.CredentialService.Services;
+using xKsef.CredentialService.Endpoints;
+using xKsef.CredentialService.Middleware;
+using xKsef.Infrastructure.Ksef.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
+string ksefBaseUrl = KsefEnvironmentResolver.ResolveBaseUrl(builder.Configuration);
+string ksefEnvironment = KsefEnvironmentResolver.GetEnvironment(ksefBaseUrl);
 
 CryptoConfig.AddAlgorithm(typeof(EcdsaSha256SignatureDescription), "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256");
 
@@ -26,7 +31,7 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<IKeyProtector, DpapiKeyProtector>();
-builder.Services.AddSingleton<ISecretEncryptionService, SecretEncryptionService>();
+builder.Services.AddSingleton<IContextualSecretEncryptionService, ContextualSecretEncryptionService>();
 builder.Services.AddDbContext<CredentialsDbContext>(options => 
     options.UseSqlServer(builder.Configuration.GetConnectionString("CredentialsDatabase")));
 builder.Services.AddScoped<IKsefCredentialService, KsefCredentialService>();
@@ -91,7 +96,7 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 builder.Services.AddKSeFClient(options =>
 {
-    options.BaseUrl = builder.Configuration["Ksef:BaseUrl"] ?? throw new InvalidOperationException("Nie skonfigurowano adresu KSeF.");
+    options.BaseUrl = ksefBaseUrl;
 });
 builder.Services.AddTransient<ICryptographyClient, CryptographyClient>();
 builder.Services.AddSingleton<ICertificateFetcher, DefaultCertificateFetcher>();
@@ -127,12 +132,10 @@ app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<KsefEnvironmentMiddleware>(ksefEnvironment);
 
 app.MapControllers();
 
-app.MapGet("/internal/health", (ClaimsPrincipal user) =>
-{
-    return Results.Ok(new { Success = true, Client = user.Identity?.Name });
-}).RequireAuthorization();
+app.MapCredentialServiceHealth(ksefEnvironment);
 
 app.Run();

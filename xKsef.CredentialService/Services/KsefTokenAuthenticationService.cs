@@ -41,7 +41,7 @@ public sealed class KsefTokenAuthenticationService : IKsefTokenAuthenticationSer
 
             if (await TryRefreshAccessTokenAsync(tenantId, userId, credentialId, nip, cancellationToken)) return;
 
-            byte[]? tokenBytes = await _credentialService.GetAsync(credentialId, tenantId, userId, "Token", cancellationToken);
+            byte[]? tokenBytes = await _credentialService.GetAsync(credentialId, tenantId, userId, "Token", cancellationToken, contextNip: nip);
 
             if (tokenBytes == null) throw new InvalidOperationException("Nie znaleziono poświadczenia KSeF.");
 
@@ -115,7 +115,7 @@ public sealed class KsefTokenAuthenticationService : IKsefTokenAuthenticationSer
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("Nieprawidłowy identyfikator użytkownika.", nameof(userId));
         if (string.IsNullOrWhiteSpace(nip) || nip.Length != 10 || !nip.All(char.IsAsciiDigit)) throw new ArgumentException("Nieprawidłowy NIP.", nameof(nip));
 
-        byte[]? tokenBytes = await _credentialService.GetAsync(credentialId, tenantId, userId, "Token", cancellationToken);
+        byte[]? tokenBytes = await _credentialService.GetAsync(credentialId, tenantId, userId, "Token", cancellationToken, contextNip: nip);
 
         if (tokenBytes == null) throw new InvalidOperationException("Nie znaleziono poświadczenia KSeF.");
 

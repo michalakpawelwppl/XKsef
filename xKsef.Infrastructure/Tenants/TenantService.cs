@@ -78,7 +78,7 @@ public sealed class TenantService : ITenantService
         if (tenantId == Guid.Empty) throw new ArgumentException("TenantId nie może być pusty.", nameof(tenantId));
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("UserId nie może być pusty.", nameof(userId));
 
-        UserTenant? userTenant = await _dbContext.UserTenants.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.UserId == userId, cancellationToken);
+        UserTenant? userTenant = await _dbContext.UserTenants.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId && x.UserId == userId && _dbContext.Tenants.Any(t => t.Id == tenantId && t.IsActive), cancellationToken);
 
         if (userTenant == null) throw new InvalidOperationException("Użytkownik nie jest przypisany do wskazanego tenanta.");
 
@@ -90,7 +90,7 @@ public sealed class TenantService : ITenantService
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("UserId nie może być pusty.", nameof(userId));
         if (credentialId == Guid.Empty) throw new ArgumentException("CredentialId nie może być pusty.", nameof(credentialId));
 
-        UserTenant? userTenant = await _dbContext.UserTenants.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.UserId == userId, cancellationToken);
+        UserTenant? userTenant = await _dbContext.UserTenants.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.UserId == userId && _dbContext.Tenants.Any(t => t.Id == tenantId && t.IsActive), cancellationToken);
 
         if (userTenant == null) throw new InvalidOperationException("Użytkownik nie jest przypisany do wskazanego tenanta.");
 

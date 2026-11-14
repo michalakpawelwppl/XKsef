@@ -30,7 +30,8 @@ namespace xKsef.CredentialService.Migrations
 
                     b.Property<byte[]>("AuthTag")
                         .IsRequired()
-                        .HasColumnType("varbinary(max)");
+                        .HasMaxLength(16)
+                        .HasColumnType("varbinary(16)");
 
                     b.Property<string>("ContextNip")
                         .HasMaxLength(10)
@@ -52,17 +53,105 @@ namespace xKsef.CredentialService.Migrations
                         .IsRequired()
                         .HasColumnType("varbinary(max)");
 
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .HasDefaultValue("");
+
                     b.Property<byte[]>("Nonce")
                         .IsRequired()
-                        .HasColumnType("varbinary(max)");
+                        .HasMaxLength(12)
+                        .HasColumnType("varbinary(12)");
 
                     b.Property<string>("ProtectionType")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<Guid?>("SourceCredentialId")
+                    b.Property<Guid?>("TenantId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CredentialType", "IsActive", "CreatedAt");
+
+                    b.HasIndex("UserId", "TenantId", "ContextNip", "CredentialType", "IsActive", "CreatedAt");
+
+                    b.ToTable("KsefCredentials", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_KsefCredentials_AuthTag", "DATALENGTH([AuthTag]) = 16");
+
+                            t.HasCheckConstraint("CK_KsefCredentials_EncryptedPayload", "DATALENGTH([EncryptedData]) > 0 AND DATALENGTH([EncryptedDek]) > 0");
+
+                            t.HasCheckConstraint("CK_KsefCredentials_Id", "[Id] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_KsefCredentials_Nonce", "DATALENGTH([Nonce]) = 12");
+
+                            t.HasCheckConstraint("CK_KsefCredentials_ProtectionType", "[ProtectionType] COLLATE Latin1_General_100_BIN2 = N'DPAPI-CurrentUser'");
+
+                            t.HasCheckConstraint("CK_KsefCredentials_SourceContext", "([CredentialType] COLLATE Latin1_General_100_BIN2 = N'Certificate' AND [TenantId] IS NULL AND [ContextNip] IS NULL) OR ([CredentialType] COLLATE Latin1_General_100_BIN2 = N'Token' AND [TenantId] IS NOT NULL AND [TenantId] <> '00000000-0000-0000-0000-000000000000' AND [ContextNip] IS NOT NULL AND DATALENGTH([ContextNip]) = 20 AND [ContextNip] COLLATE Latin1_General_100_BIN2 NOT LIKE N'%[^0-9]%')");
+
+                            t.HasCheckConstraint("CK_KsefCredentials_UserId", "LEN(LTRIM(RTRIM([UserId]))) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.CredentialService.Data.KsefSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("AccessTokenValidUntil")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("AuthTag")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varbinary(16)");
+
+                    b.Property<string>("ContextNip")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("CredentialId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("EncryptedData")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<byte[]>("EncryptedDek")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<byte[]>("Nonce")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("varbinary(12)");
+
+                    b.Property<string>("ProtectionType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTimeOffset>("RefreshTokenValidUntil")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uniqueidentifier");
@@ -72,16 +161,41 @@ namespace xKsef.CredentialService.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)");
 
-                    b.Property<DateTimeOffset?>("ValidUntil")
-                        .HasColumnType("datetimeoffset");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "UserId", "CredentialType", "SourceCredentialId", "ContextNip")
-                        .IsUnique()
-                        .HasFilter("[CredentialType] IN ('AccessToken', 'RefreshToken')");
+                    b.HasIndex("CredentialId", "UserId");
 
-                    b.ToTable("KsefCredentials", (string)null);
+                    b.HasIndex("UserId", "TenantId", "CredentialId", "ContextNip")
+                        .IsUnique();
+
+                    b.ToTable("KsefSessions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_KsefSessions_AuthTag", "DATALENGTH([AuthTag]) = 16");
+
+                            t.HasCheckConstraint("CK_KsefSessions_ContextNip", "DATALENGTH([ContextNip]) = 20 AND [ContextNip] COLLATE Latin1_General_100_BIN2 NOT LIKE N'%[^0-9]%'");
+
+                            t.HasCheckConstraint("CK_KsefSessions_EncryptedPayload", "DATALENGTH([EncryptedData]) > 0 AND DATALENGTH([EncryptedDek]) > 0");
+
+                            t.HasCheckConstraint("CK_KsefSessions_Identifiers", "[Id] <> '00000000-0000-0000-0000-000000000000' AND [TenantId] <> '00000000-0000-0000-0000-000000000000' AND [CredentialId] <> '00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_KsefSessions_Nonce", "DATALENGTH([Nonce]) = 12");
+
+                            t.HasCheckConstraint("CK_KsefSessions_ProtectionType", "LEN(LTRIM(RTRIM([ProtectionType]))) > 0");
+
+                            t.HasCheckConstraint("CK_KsefSessions_UserId", "LEN(LTRIM(RTRIM([UserId]))) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.CredentialService.Data.KsefSession", b =>
+                {
+                    b.HasOne("xKsef.CredentialService.Data.KsefCredential", "Credential")
+                        .WithMany()
+                        .HasForeignKey("CredentialId", "UserId")
+                        .HasPrincipalKey("Id", "UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Credential");
                 });
 #pragma warning restore 612, 618
         }

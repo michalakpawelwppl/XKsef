@@ -17,6 +17,7 @@ public partial class App : System.Windows.Application
     public App()
     {
         _host = Host.CreateDefaultBuilder()
+            .UseContentRoot(AppContext.BaseDirectory)
             .ConfigureServices((context, services) =>
             {
                 var apiBaseUrl = context.Configuration["Api:BaseUrl"] ?? throw new InvalidOperationException("Brak konfiguracji Api:BaseUrl.");

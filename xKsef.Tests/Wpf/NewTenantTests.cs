@@ -325,7 +325,7 @@ public sealed class NewTenantTests
         }
         public Task<IReadOnlyList<TenantDto>> GetMyTenantsAsync(ApiRequestContext context) => throw new NotSupportedException();
         public Task<IReadOnlyList<TenantDto>> GetMyTenantsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<Guid?> GetPreferredKsefCredentialIdAsync(Guid tenantId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task SetPreferredKsefCredentialIdAsync(Guid tenantId, Guid? credentialId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<Guid?> GetPreferredKsefCredentialIdAsync(ApiRequestContext context) => throw new NotSupportedException();
+        public Task SetPreferredKsefCredentialIdAsync(ApiRequestContext context, Guid? credentialId) => throw new NotSupportedException();
     }
 }

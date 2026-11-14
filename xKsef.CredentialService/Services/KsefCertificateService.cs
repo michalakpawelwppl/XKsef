@@ -14,7 +14,7 @@ public sealed class KsefCertificateService
         _credentialService = credentialService;
     }
 
-    public async Task<Guid> SaveCertificateAsync(Guid tenantId, string userId, string certificatePem, string encryptedPrivateKeyPem, string password, CancellationToken cancellationToken = default)
+    public async Task<Guid> SaveCertificateAsync(string userId, string certificatePem, string encryptedPrivateKeyPem, string password, CancellationToken cancellationToken = default)
     {
         using var certificate = _certificateImporter.Import(certificatePem, encryptedPrivateKeyPem, password);
 
@@ -22,7 +22,7 @@ public sealed class KsefCertificateService
 
         try
         {
-            return await _credentialService.SaveAsync(tenantId, userId, "Certificate", pkcs12, cancellationToken);
+            return await _credentialService.SaveAsync(null, userId, "Certificate", pkcs12, cancellationToken);
         }
         finally
         {
@@ -30,9 +30,9 @@ public sealed class KsefCertificateService
         }
     }
 
-    public async Task<X509Certificate2?> GetCertificateAsync(Guid credentialId, Guid tenantId, string userId, CancellationToken cancellationToken = default)
+    public async Task<X509Certificate2?> GetCertificateAsync(Guid credentialId, string userId, CancellationToken cancellationToken = default)
     {
-        byte[]? pkcs12 = await _credentialService.GetAsync(credentialId, tenantId, userId, "Certificate", cancellationToken);
+        byte[]? pkcs12 = await _credentialService.GetAsync(credentialId, null, userId, "Certificate", cancellationToken);
 
         if (pkcs12 == null) return null;
 

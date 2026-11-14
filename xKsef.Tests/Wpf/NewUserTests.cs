@@ -420,8 +420,8 @@ public sealed class NewUserTests
             return Handler(context);
         }
         public Task<LoginResponse?> LoginAsync(ApiRequestContext context, string login, string password) => throw new NotSupportedException();
-        public Task AuthenticateKsefTokenAsync(ApiRequestContext context) => throw new NotSupportedException();
-        public Task AuthenticateKsefCertificateAsync(ApiRequestContext context) => throw new NotSupportedException();
+        public Task AuthenticateKsefTokenAsync(ApiRequestContext context, Guid credentialId) => throw new NotSupportedException();
+        public Task AuthenticateKsefCertificateAsync(ApiRequestContext context, Guid credentialId) => throw new NotSupportedException();
         public Task<Guid> SaveKsefCertificateAsync(ApiRequestContext context, string certificatePem, string encryptedPrivateKeyPem, string password) => throw new NotSupportedException();
     }
 }

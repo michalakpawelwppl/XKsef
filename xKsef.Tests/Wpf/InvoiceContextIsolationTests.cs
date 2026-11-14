@@ -392,6 +392,7 @@ public sealed class InvoiceContextIsolationTests
             api.QueryHandler = (_, _, _, _, _, _) => query.Task;
             try
             {
+                UseSavedCredential(vm);
                 Task import = vm.ImportFromKsefCommand.ExecuteAsync(null);
                 vm.DateFrom = vm.DateFrom.AddDays(-2); vm.DateTo = vm.DateTo.AddDays(1);
                 vm.SelectedInvoiceDateKind = InvoiceDateKind.InvoicingDate;
@@ -431,6 +432,7 @@ public sealed class InvoiceContextIsolationTests
             api.QueryHandler = (_, _, _, _, _, _) => Task.FromException<InvoiceQueryResultDto>(new InvalidOperationException("GET failed"));
             try
             {
+                UseSavedCredential(vm);
                 await vm.ImportFromKsefCommand.ExecuteAsync(null);
                 Assert.Single(api.ImportContexts);
                 Assert.Equal(refreshFails ? 1 : 0, api.QueryFilters.Count);
@@ -456,6 +458,7 @@ public sealed class InvoiceContextIsolationTests
             api.QueryHandler = (_, _, _, _, _, _) => query.Task;
             try
             {
+                UseSavedCredential(vm);
                 Task import = vm.ImportFromKsefCommand.ExecuteAsync(null);
                 tenant.SetTenant(new TenantDto(Guid.NewGuid(), "New tenant", "User"));
                 await WpfTestDispatcher.DrainAsync();
@@ -1444,6 +1447,7 @@ public sealed class InvoiceContextIsolationTests
 
             try
             {
+                UseSavedCredential(viewModel);
                 await viewModel.ImportFromKsefCommand.ExecuteAsync(null);
 
                 Assert.Single(invoiceClient.ImportContexts);
@@ -1599,14 +1603,14 @@ public sealed class InvoiceContextIsolationTests
         Assert.Null(transport.LastTenantId);
 
         ApiRequestContext tenantContextA = CreateContext(tenantA, "token-A", 22);
-        await client.AuthenticateKsefTokenAsync(tenantContextA);
+        await client.AuthenticateKsefTokenAsync(tenantContextA, Guid.NewGuid());
         AssertCapturedCredentialsContext(transport, tenantA);
 
         Guid savedCredential = await client.SaveKsefCertificateAsync(tenantContextA, "certificate", "private-key", "password");
         Assert.Equal(credentialId, savedCredential);
         AssertCapturedCredentialsContext(transport, tenantA);
 
-        await client.AuthenticateKsefCertificateAsync(tenantContextA);
+        await client.AuthenticateKsefCertificateAsync(tenantContextA, Guid.NewGuid());
         AssertCapturedCredentialsContext(transport, tenantA);
         Assert.Equal(4, transport.RequestCount);
     }
@@ -1624,10 +1628,10 @@ public sealed class InvoiceContextIsolationTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.LoginAsync(wrongLoginScope, "user", "password"));
 
         var missingJwt = CreateContext(Guid.NewGuid(), null, 1);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.AuthenticateKsefTokenAsync(missingJwt));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.AuthenticateKsefTokenAsync(missingJwt, Guid.NewGuid()));
 
         var missingTenant = CreateContext(null, "token-A", 1);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.AuthenticateKsefCertificateAsync(missingTenant));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.AuthenticateKsefCertificateAsync(missingTenant, Guid.NewGuid()));
 
         Assert.Equal(0, transport.RequestCount);
     }
@@ -1990,7 +1994,7 @@ public sealed class InvoiceContextIsolationTests
                 Assert.True(viewModel.HasKsefToken);
                 Assert.Equal(savedCredentialId, viewModel.KsefCredentialId);
                 Assert.Equal(preferredCredentialId, viewModel.PreferredKsefCredentialId);
-                Assert.Equal(preferredCredentialId, viewModel.SelectedKsefCredential?.CredentialId);
+                Assert.Null(viewModel.SelectedKsefCredential); // The certificate was not loaded into the available catalog.
                 Assert.Contains(viewModel.AvailableKsefCredentials, option => option.CredentialId == savedCredentialId);
             }
             finally
@@ -2278,6 +2282,7 @@ public sealed class InvoiceContextIsolationTests
 
             try
             {
+                UseSavedCredential(viewModel, useToken ? "Token" : "Certificate");
                 var oldCommand = useToken ? viewModel.AuthenticateKsefTokenCommand : viewModel.AuthenticateKsefCertificateCommand;
                 Task oldTask = oldCommand.ExecuteAsync(null);
                 ApiRequestContext oldContext = Assert.Single(useToken
@@ -2311,6 +2316,7 @@ public sealed class InvoiceContextIsolationTests
                 Task? newTask = null;
                 if (contextChange != "logout")
                 {
+                    UseSavedCredential(viewModel, useToken ? "Certificate" : "Token");
                     var newCommand = useToken ? viewModel.AuthenticateKsefCertificateCommand : viewModel.AuthenticateKsefTokenCommand;
                     newTask = newCommand.ExecuteAsync(null);
                     ApiRequestContext newContext = Assert.Single(useToken
@@ -2385,6 +2391,7 @@ public sealed class InvoiceContextIsolationTests
 
             try
             {
+                UseSavedCredential(viewModel, useToken ? "Token" : "Certificate");
                 var command = useToken ? viewModel.AuthenticateKsefTokenCommand : viewModel.AuthenticateKsefCertificateCommand;
                 Task task = command.ExecuteAsync(null);
                 Assert.True(viewModel.IsLoading);
@@ -2721,6 +2728,252 @@ public sealed class InvoiceContextIsolationTests
         return new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
+    [Theory]
+    [InlineData("tenant", false)]
+    [InlineData("tenant", true)]
+    [InlineData("tenant-return", false)]
+    [InlineData("tenant-return", true)]
+    [InlineData("session", false)]
+    [InlineData("session", true)]
+    public Task LatePreferenceWriteCannotChangeNewGenerationOrReleaseItsLoading(string change, bool fail)
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var a = new TenantDto(Guid.NewGuid(), "A", "Admin");
+            var b = new TenantDto(Guid.NewGuid(), "B", "Admin");
+            var tokens = new TokenStore { AccessToken = "token-A" };
+            var tenants = new TenantContext();
+            tenants.SetTenant(a);
+            Guid saved = Guid.NewGuid();
+            Guid firstChoice = Guid.NewGuid();
+            Guid secondChoice = Guid.NewGuid();
+            var oldResponse = NewCompletionSource<bool>();
+            var newResponse = NewCompletionSource<bool>();
+            int writes = 0;
+            var tenantClient = new FakeTenantApiClient
+            {
+                PreferredHandler = _ => Task.FromResult<Guid?>(saved),
+                SavePreferredHandler = (_, _) => ++writes == 1 ? oldResponse.Task : newResponse.Task
+            };
+            var catalog = new FakeKsefCredentialsApiClient
+            {
+                CertificatesHandler = _ => Task.FromResult<IReadOnlyList<KsefCertificateInfo>>(new[]
+                {
+                    new KsefCertificateInfo(saved, "Saved", DateTimeOffset.UtcNow),
+                    new KsefCertificateInfo(firstChoice, "First", DateTimeOffset.UtcNow),
+                    new KsefCertificateInfo(secondChoice, "Second", DateTimeOffset.UtcNow)
+                })
+            };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, tenantClient, catalog);
+            vm.IsLoggedIn = true;
+            var first = new KsefCredentialOption { CredentialId = firstChoice, CredentialType = "Certificate", Name = "First" };
+            vm.AvailableKsefCredentials.Add(first);
+            vm.SelectedKsefCredential = first;
+            vm.PreferredKsefCredentialId = saved;
+            Task? newTask = null;
+            Task oldTask = vm.SavePreferredKsefCredentialCommand.ExecuteAsync(null);
+            try
+            {
+                var oldContext = Assert.Single(tenantClient.PreferenceWrites).Context;
+                if (change == "session") tokens.AccessToken = "token-B";
+                else
+                {
+                    vm.SelectedTenant = b;
+                    await WpfTestDispatcher.DrainAsync();
+                    if (change == "tenant-return") vm.SelectedTenant = a;
+                }
+                await WpfTestDispatcher.DrainAsync();
+                // Session changes may reset the selected tenant; select an authorized context explicitly.
+                if (!tenants.HasTenant) { vm.SelectedTenant = a; await WpfTestDispatcher.DrainAsync(); }
+                var next = new KsefCredentialOption { CredentialId = secondChoice, CredentialType = "Certificate", Name = "Second" };
+                if (!vm.AvailableKsefCredentials.Any(c => c.CredentialId == secondChoice)) vm.AvailableKsefCredentials.Add(next);
+                vm.SelectedKsefCredential = vm.AvailableKsefCredentials.First(c => c.CredentialId == secondChoice);
+                vm.PreferredKsefCredentialId = saved;
+                newTask = vm.SavePreferredKsefCredentialCommand.ExecuteAsync(null);
+                Assert.Equal(2, tenantClient.PreferenceWrites.Count);
+                var current = tenantClient.PreferenceWrites[1].Context;
+                Assert.NotEqual(oldContext.Generation, current.Generation);
+                Assert.Equal(ApiRequestScope.TenantRoute, oldContext.Scope);
+                if (change == "tenant-return") Assert.Equal(oldContext.TenantId, current.TenantId);
+                vm.Status = "New request owns loading";
+                if (fail) oldResponse.SetException(new InvalidOperationException("Old request failure"));
+                else oldResponse.SetResult(true);
+                await oldTask;
+                Assert.Equal(saved, vm.PreferredKsefCredentialId);
+                Assert.Equal(secondChoice, vm.SelectedKsefCredential?.CredentialId);
+                Assert.True(vm.IsLoading);
+                Assert.Equal("New request owns loading", vm.Status);
+                newResponse.SetResult(true);
+                await newTask;
+                Assert.Equal(secondChoice, vm.PreferredKsefCredentialId);
+                Assert.False(vm.IsLoading);
+            }
+            finally
+            {
+                oldResponse.TrySetResult(true);
+                newResponse.TrySetResult(true);
+                await oldTask;
+                if (newTask is not null) await newTask;
+                vm.Cleanup();
+                await WpfTestDispatcher.DrainAsync();
+            }
+        });
+    }
+
+    [Fact]
+    public Task UnsavedChoiceAndFailedSaveCannotAuthenticateOrImport()
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token-A" };
+            var tenants = new TenantContext();
+            tenants.SetTenant(new TenantDto(Guid.NewGuid(), "A", "Admin"));
+            var tenantClient = new FakeTenantApiClient { SavePreferredHandler = (_, _) => Task.FromException(new InvalidOperationException("Save failed")) };
+            var invoiceClient = new FakeInvoiceApiClient();
+            var auth = new FakeAuthenticationApiClient();
+            var vm = CreateViewModel(invoiceClient, tokens, tenants, tenantClient, authenticationApiClient: auth);
+            vm.IsLoggedIn = true;
+            UseSavedCredential(vm);
+            Guid saved = vm.PreferredKsefCredentialId!.Value;
+            var changed = new KsefCredentialOption { CredentialId = Guid.NewGuid(), CredentialType = "Certificate", Name = "Changed" };
+            vm.AvailableKsefCredentials.Add(changed);
+            vm.SelectedKsefCredential = changed;
+            try
+            {
+                await vm.AuthenticateKsefCertificateCommand.ExecuteAsync(null);
+                await vm.ImportFromKsefCommand.ExecuteAsync(null);
+                Assert.Empty(auth.AuthenticationIds);
+                Assert.Empty(invoiceClient.ImportContexts);
+                await vm.SavePreferredKsefCredentialCommand.ExecuteAsync(null);
+                Assert.Equal(saved, vm.PreferredKsefCredentialId);
+                Assert.False(vm.IsLoading);
+                await vm.AuthenticateKsefCertificateCommand.ExecuteAsync(null);
+                await vm.ImportFromKsefCommand.ExecuteAsync(null);
+                Assert.Empty(auth.AuthenticationIds);
+                Assert.Empty(invoiceClient.ImportContexts);
+                tenantClient.SavePreferredHandler = (_, _) => Task.CompletedTask;
+                await vm.SavePreferredKsefCredentialCommand.ExecuteAsync(null);
+                Assert.Equal(changed.CredentialId, vm.PreferredKsefCredentialId);
+                await vm.AuthenticateKsefCertificateCommand.ExecuteAsync(null);
+                Assert.Equal(changed.CredentialId, Assert.Single(auth.AuthenticationIds));
+                await vm.ImportFromKsefCommand.ExecuteAsync(null);
+                Assert.Single(invoiceClient.ImportContexts);
+            }
+            finally { vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+
+    [Fact]
+    public Task CatalogAndTenantPreferenceRestoreExactCertificateWithoutFallback()
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token-A" };
+            var tenants = new TenantContext();
+            var a = new TenantDto(Guid.NewGuid(), "A", "Admin");
+            var b = new TenantDto(Guid.NewGuid(), "B", "Admin");
+            Guid first = Guid.NewGuid();
+            Guid second = Guid.NewGuid();
+            Guid missing = Guid.NewGuid();
+            var client = new FakeKsefCredentialsApiClient
+            {
+                CertificatesHandler = _ => Task.FromResult<IReadOnlyList<KsefCertificateInfo>>(new[]
+                {
+                    new KsefCertificateInfo(first, "First certificate", DateTimeOffset.UtcNow),
+                    new KsefCertificateInfo(second, string.Empty, DateTimeOffset.UtcNow)
+                })
+            };
+            var preferences = new FakeTenantApiClient { PreferredHandler = c => Task.FromResult<Guid?>(c.TenantId == a.Id ? first : missing) };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, preferences, client);
+            vm.IsLoggedIn = true;
+            try
+            {
+                vm.SelectedTenant = a;
+                await WpfTestDispatcher.DrainAsync();
+                Assert.Equal(2, vm.AvailableKsefCredentials.Count);
+                Assert.Equal(first, vm.SelectedKsefCredential?.CredentialId);
+                Assert.Contains(second.ToString("N")[..8], vm.AvailableKsefCredentials.Single(c => c.CredentialId == second).Name);
+                vm.SelectedTenant = b;
+                await WpfTestDispatcher.DrainAsync();
+                Assert.Equal(missing, vm.PreferredKsefCredentialId);
+                Assert.Null(vm.SelectedKsefCredential);
+                vm.SelectedTenant = a;
+                await WpfTestDispatcher.DrainAsync();
+                Assert.Equal(first, vm.SelectedKsefCredential?.CredentialId);
+            }
+            finally { vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+
+    [Fact]
+    public async Task PreferenceHttpRequestsUseCapturedJwtAndTenantRoute()
+    {
+        var tokens = new TokenStore { AccessToken = "token-A" };
+        var tenants = new TenantContext();
+        Guid tenant = Guid.NewGuid();
+        using var transport = new RecordingHandler((_, _) => Task.FromResult(JsonResponse("{\"credentialId\":null}")));
+        using var http = CreatePipeline(tokens, tenants, transport);
+        var client = new TenantApiClient(http);
+        var context = CreateContext(tenant, "token-A", tokens.SessionVersion) with { Scope = ApiRequestScope.TenantRoute };
+        await client.GetPreferredKsefCredentialIdAsync(context);
+        Assert.Equal("Bearer token-A", transport.LastAuthorization);
+        Assert.Null(transport.LastTenantId);
+        Assert.Equal(ApiRequestScope.TenantRoute, transport.LastRequestContext?.Scope);
+        await client.SetPreferredKsefCredentialIdAsync(context, Guid.NewGuid());
+        Assert.Equal(context, transport.LastRequestContext);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.SetPreferredKsefCredentialIdAsync(context with { Scope = ApiRequestScope.User }, Guid.NewGuid()));
+    }
+    [Fact]
+    public Task OlderPreferenceReadCannotUndoNewWriteOrPendingSelection()
+    {
+        return WpfTestDispatcher.RunAsync(async () =>
+        {
+            var tokens = new TokenStore { AccessToken = "token-A" };
+            var tenants = new TenantContext();
+            var a = new TenantDto(Guid.NewGuid(), "A", "Admin");
+            Guid saved = Guid.NewGuid();
+            Guid changed = Guid.NewGuid();
+            var read = NewCompletionSource<Guid?>();
+            var write = NewCompletionSource<bool>();
+            var preferenceClient = new FakeTenantApiClient { PreferredHandler = _ => read.Task, SavePreferredHandler = (_, _) => write.Task };
+            var catalog = new FakeKsefCredentialsApiClient
+            {
+                CertificatesHandler = _ => Task.FromResult<IReadOnlyList<KsefCertificateInfo>>(new[]
+                {
+                    new KsefCertificateInfo(saved, "Saved", DateTimeOffset.UtcNow), new KsefCertificateInfo(changed, "Changed", DateTimeOffset.UtcNow)
+                })
+            };
+            var vm = CreateViewModel(new FakeInvoiceApiClient(), tokens, tenants, preferenceClient, catalog);
+            vm.IsLoggedIn = true;
+            vm.SelectedTenant = a;
+            await WpfTestDispatcher.DrainAsync();
+            var selected = new KsefCredentialOption { CredentialId = changed, CredentialType = "Certificate", Name = "Changed" };
+            vm.AvailableKsefCredentials.Add(selected);
+            vm.SelectedKsefCredential = selected;
+            vm.PreferredKsefCredentialId = saved;
+            Task saving = vm.SavePreferredKsefCredentialCommand.ExecuteAsync(null);
+            try
+            {
+                read.SetResult(saved);
+                await WpfTestDispatcher.DrainAsync();
+                Assert.Equal(changed, vm.SelectedKsefCredential?.CredentialId);
+                Assert.Equal(saved, vm.PreferredKsefCredentialId);
+                Assert.True(vm.IsLoading);
+                write.SetResult(true);
+                await saving;
+                Assert.Equal(changed, vm.PreferredKsefCredentialId);
+                Assert.Equal(changed, vm.SelectedKsefCredential?.CredentialId);
+            }
+            finally { read.TrySetResult(saved); write.TrySetResult(true); await saving; vm.Cleanup(); await WpfTestDispatcher.DrainAsync(); }
+        });
+    }
+    private static void UseSavedCredential(MainViewModel vm, string type = "Certificate")
+    {
+        var option = new KsefCredentialOption { CredentialId = vm.PreferredKsefCredentialId ?? Guid.NewGuid(), CredentialType = type, Name = type };
+        vm.AvailableKsefCredentials.Add(option);
+        vm.SelectedKsefCredential = option;
+        vm.PreferredKsefCredentialId = option.CredentialId;
+    }
     private static MainViewModel CreateViewModel(FakeInvoiceApiClient invoiceClient, ITokenStore tokenStore, TenantContext tenantContext, FakeTenantApiClient tenantApiClient, FakeKsefCredentialsApiClient? credentialsApiClient = null, FakeKsefTokenWindowService? tokenWindowService = null, FakeAuthenticationApiClient? authenticationApiClient = null, ICertificateSelectionWindowService? certificateSelectionWindowService = null, FakeWindowNavigationService? navigationService = null)
     {
         return new MainViewModel(
@@ -2803,6 +3056,9 @@ public sealed class InvoiceContextIsolationTests
 
     private sealed class FakeTenantApiClient : ITenantApiClient
     {
+        public Func<ApiRequestContext, Task<Guid?>> PreferredHandler { get; set; } = _ => Task.FromResult<Guid?>(null);
+        public Func<ApiRequestContext, Guid?, Task> SavePreferredHandler { get; set; } = (_, _) => Task.CompletedTask;
+        public List<(ApiRequestContext Context, Guid? Id)> PreferenceWrites { get; } = [];
         public IReadOnlyList<TenantDto> Tenants { get; set; } = [];
         public int GetMyTenantsCallCount { get; private set; }
         public List<ApiRequestContext> UserContexts { get; } = [];
@@ -2821,19 +3077,21 @@ public sealed class InvoiceContextIsolationTests
             return Task.FromResult(Tenants);
         }
 
-        public Task<Guid?> GetPreferredKsefCredentialIdAsync(Guid tenantId, CancellationToken cancellationToken = default)
+        public Task<Guid?> GetPreferredKsefCredentialIdAsync(ApiRequestContext context)
         {
-            return Task.FromResult<Guid?>(null);
+            return PreferredHandler(context);
         }
 
-        public Task SetPreferredKsefCredentialIdAsync(Guid tenantId, Guid? credentialId, CancellationToken cancellationToken = default)
+        public Task SetPreferredKsefCredentialIdAsync(ApiRequestContext context, Guid? credentialId)
         {
-            return Task.CompletedTask;
+            PreferenceWrites.Add((context, credentialId));
+            return SavePreferredHandler(context, credentialId);
         }
     }
 
     private sealed class FakeKsefCredentialsApiClient : IKsefCredentialsApiClient
     {
+        public Func<ApiRequestContext, Task<IReadOnlyList<KsefCertificateInfo>>>? CertificatesHandler { get; set; }
         public List<ApiRequestContext> TokenInfoContexts { get; } = [];
         public List<ApiRequestContext> CertificateInfoContexts { get; } = [];
         public List<ApiRequestContext> SaveTokenContexts { get; } = [];
@@ -2844,6 +3102,12 @@ public sealed class InvoiceContextIsolationTests
         public Func<ApiRequestContext, string, Task<Guid>> SaveTokenHandler { get; set; }
             = (_, _) => Task.FromResult(Guid.NewGuid());
 
+        public async Task<IReadOnlyList<KsefCertificateInfo>> GetCertificatesAsync(ApiRequestContext context)
+        {
+            if (CertificatesHandler is not null) return await CertificatesHandler(context);
+            var info = await GetCertificateInfoAsync(context);
+            return info.Exists && info.CredentialId is Guid id ? new[] { new KsefCertificateInfo(id, string.Empty, DateTimeOffset.UtcNow) } : Array.Empty<KsefCertificateInfo>();
+        }
         public Task<KsefTokenInfo> GetCertificateInfoAsync(ApiRequestContext context)
         {
             CertificateInfoContexts.Add(context);
@@ -2870,6 +3134,7 @@ public sealed class InvoiceContextIsolationTests
 
         public List<ApiRequestContext> LoginContexts { get; } = [];
         public List<ApiRequestContext> SaveCertificateContexts { get; } = [];
+        public List<Guid> AuthenticationIds { get; } = [];
         public List<ApiRequestContext> AuthenticateTokenContexts { get; } = [];
         public List<ApiRequestContext> AuthenticateCertificateContexts { get; } = [];
         public Func<ApiRequestContext, Task> AuthenticateTokenHandler { get; set; } = _ => Task.CompletedTask;
@@ -2885,8 +3150,9 @@ public sealed class InvoiceContextIsolationTests
             return LoginHandler(context, login, password);
         }
 
-        public Task AuthenticateKsefTokenAsync(ApiRequestContext context)
+        public Task AuthenticateKsefTokenAsync(ApiRequestContext context, Guid credentialId)
         {
+            AuthenticationIds.Add(credentialId);
             AuthenticateTokenContexts.Add(context);
             return AuthenticateTokenHandler(context);
         }
@@ -2895,8 +3161,9 @@ public sealed class InvoiceContextIsolationTests
             SaveCertificateContexts.Add(context);
             return SaveCertificateHandler(context, certificatePem, encryptedPrivateKeyPem, password);
         }
-        public Task AuthenticateKsefCertificateAsync(ApiRequestContext context)
+        public Task AuthenticateKsefCertificateAsync(ApiRequestContext context, Guid credentialId)
         {
+            AuthenticationIds.Add(credentialId);
             AuthenticateCertificateContexts.Add(context);
             return AuthenticateCertificateHandler(context);
         }

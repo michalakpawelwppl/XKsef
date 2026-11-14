@@ -29,7 +29,7 @@ public sealed class KsefSessionService : IKsefSessionService
 
         try
         {
-            string? credentialType = await _credentialService.GetCredentialTypeAsync(credentialId, tenantId, userId, cancellationToken);
+            string? credentialType = await _credentialService.GetCredentialTypeAsync(credentialId, tenantId, userId, nip, cancellationToken);
 
             if (credentialType == null) throw new InvalidOperationException("Nie znaleziono poświadczenia KSeF dla użytkownika i tenanta.");
 

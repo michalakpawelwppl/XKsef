@@ -1,0 +1,40 @@
+[
+  {
+    "Name": "xKsef TEST",
+    "Projects": [
+      {
+        "Path": "xKsef.CredentialService\\xKsef.CredentialService.csproj",
+        "Action": "Start",
+        "DebugTarget": "TEST"
+      },
+      {
+        "Path": "xKsef.Api\\xKsef.Api.csproj",
+        "Action": "Start",
+        "DebugTarget": "TEST"
+      },
+      {
+        "Path": "xKsef.Wpf\\xKsef.Wpf.csproj",
+        "Action": "Start"
+      }
+    ]
+  },
+  {
+    "Name": "xKsef PROD",
+    "Projects": [
+      {
+        "Path": "xKsef.CredentialService\\xKsef.CredentialService.csproj",
+        "Action": "Start",
+        "DebugTarget": "PROD"
+      },
+      {
+        "Path": "xKsef.Api\\xKsef.Api.csproj",
+        "Action": "Start",
+        "DebugTarget": "PROD"
+      },
+      {
+        "Path": "xKsef.Wpf\\xKsef.Wpf.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

@@ -37,6 +37,14 @@ public sealed class KsefCredentialsApiClient : IKsefCredentialsApiClient
         return result?.CredentialId ?? throw new InvalidOperationException("API nie zwróciło identyfikatora poświadczenia.");
     }
 
+    public async Task<IReadOnlyList<KsefCertificateInfo>> GetCertificatesAsync(ApiRequestContext context)
+    {
+        using var request = CreateRequest(HttpMethod.Get, "api/ksef/credentials/certificates", context);
+        using var response = await _httpClient.SendAsync(request, context.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<KsefCertificateInfo[]>(cancellationToken: context.CancellationToken)
+            ?? throw new InvalidOperationException("API nie zwróciło listy certyfikatów.");
+    }
     public async Task<KsefTokenInfo> GetCertificateInfoAsync(ApiRequestContext context)
     {
         using HttpRequestMessage request = CreateRequest(HttpMethod.Get, "api/ksef/credentials/certificate-info", context);

@@ -51,11 +51,13 @@ public sealed class KsefCredentialsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.UserId)) return BadRequest("Brak UserId.");
         if (string.IsNullOrWhiteSpace(request.Token)) return BadRequest("Token KSeF nie może być pusty.");
 
+        if (request.ContextNip is null || request.ContextNip.Length != 10 || !request.ContextNip.All(char.IsAsciiDigit)) return BadRequest("Nieprawidłowy NIP kontekstu.");
+
         byte[] tokenBytes = Encoding.UTF8.GetBytes(request.Token);
 
         try
         {
-            Guid credentialId = await _credentialService.SaveAsync(request.TenantId, request.UserId, "Token", tokenBytes, cancellationToken);
+            Guid credentialId = await _credentialService.SaveAsync(request.TenantId, request.UserId, "Token", tokenBytes, cancellationToken, contextNip: request.ContextNip);
             return Ok(new { CredentialId = credentialId });
         }
         finally
@@ -65,12 +67,14 @@ public sealed class KsefCredentialsController : ControllerBase
     }
 
     [HttpGet("token")]
-    public async Task<IActionResult> GetTokenInfoAsync([FromQuery] Guid tenantId, [FromQuery] string userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetTokenInfoAsync([FromQuery] Guid tenantId, [FromQuery] string userId, [FromQuery] string contextNip, CancellationToken cancellationToken)
     {
         if (tenantId == Guid.Empty) return BadRequest("Nieprawidłowy TenantId.");
         if (string.IsNullOrWhiteSpace(userId)) return BadRequest("Brak UserId.");
 
-        Guid? credentialId = await _credentialService.FindCredentialIdAsync(tenantId, userId, "Token", cancellationToken);
+        if (contextNip is null || contextNip.Length != 10 || !contextNip.All(char.IsAsciiDigit)) return BadRequest("Nieprawidłowy NIP kontekstu.");
+
+        Guid? credentialId = await _credentialService.FindCredentialIdAsync(tenantId, userId, "Token", cancellationToken, contextNip: contextNip);
 
         return Ok(new { Exists = credentialId.HasValue, CredentialId = credentialId });
     }
@@ -116,12 +120,11 @@ public sealed class KsefCredentialsController : ControllerBase
     }
 
     [HttpGet("certificate")]
-    public async Task<IActionResult> GetCertificateInfoAsync([FromQuery] Guid tenantId, [FromQuery] string userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetCertificateInfoAsync([FromQuery] string userId, CancellationToken cancellationToken)
     {
-        if (tenantId == Guid.Empty) return BadRequest("Nieprawidłowy TenantId.");
         if (string.IsNullOrWhiteSpace(userId)) return BadRequest("Brak UserId.");
 
-        Guid? credentialId = await _credentialService.FindCredentialIdAsync(tenantId, userId, "Certificate", cancellationToken);
+        Guid? credentialId = await _credentialService.FindCredentialIdAsync(null, userId, "Certificate", cancellationToken);
 
         return Ok(new { Exists = credentialId.HasValue, CredentialId = credentialId });
     }
@@ -130,7 +133,6 @@ public sealed class KsefCredentialsController : ControllerBase
     public async Task<IActionResult> SaveCertificateAsync([FromBody] SaveKsefCertificateRequest request, CancellationToken cancellationToken)
     {
         if (request == null) return BadRequest("Brak danych certyfikatu.");
-        if (request.TenantId == Guid.Empty) return BadRequest("Nieprawidłowy TenantId.");
         if (string.IsNullOrWhiteSpace(request.UserId)) return BadRequest("Brak UserId.");
         if (string.IsNullOrWhiteSpace(request.CertificatePem)) return BadRequest("Brak certyfikatu.");
         if (string.IsNullOrWhiteSpace(request.EncryptedPrivateKeyPem)) return BadRequest("Brak klucza prywatnego.");
@@ -138,7 +140,7 @@ public sealed class KsefCredentialsController : ControllerBase
 
         try
         {
-            Guid credentialId = await _certificateService.SaveCertificateAsync(request.TenantId, request.UserId, request.CertificatePem, request.EncryptedPrivateKeyPem, request.Password, cancellationToken);
+            Guid credentialId = await _certificateService.SaveCertificateAsync(request.UserId, request.CertificatePem, request.EncryptedPrivateKeyPem, request.Password, cancellationToken);
             return Ok(new { CredentialId = credentialId });
         }
         catch (InvalidOperationException)
@@ -162,14 +164,21 @@ public sealed class KsefCredentialsController : ControllerBase
     }
 
 
+    [HttpGet("certificates")]
+    public async Task<IActionResult> GetCertificatesAsync([FromQuery] string userId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return BadRequest("Brak UserId.");
+        return Ok(await _credentialService.GetCertificatesAsync(userId, cancellationToken));
+    }
     [HttpGet("credential-type")]
-    public async Task<IActionResult> GetCredentialTypeAsync([FromQuery] Guid credentialId, [FromQuery] Guid tenantId, [FromQuery] string userId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetCredentialTypeAsync([FromQuery] Guid credentialId, [FromQuery] Guid tenantId, [FromQuery] string userId, [FromQuery] string contextNip, CancellationToken cancellationToken)
     {
         if (credentialId == Guid.Empty) return BadRequest("Nieprawidłowy CredentialId.");
         if (tenantId == Guid.Empty) return BadRequest("Nieprawidłowy TenantId.");
         if (string.IsNullOrWhiteSpace(userId)) return BadRequest("Nie podano UserId.");
 
-        string? credentialType = await _credentialService.GetCredentialTypeAsync(credentialId, tenantId, userId, cancellationToken);
+        if (contextNip is null || contextNip.Length != 10 || !contextNip.All(char.IsAsciiDigit)) return BadRequest("Nieprawidłowy NIP.");
+        string? credentialType = await _credentialService.GetCredentialTypeAsync(credentialId, tenantId, userId, contextNip, cancellationToken);
 
         if (credentialType == null) return NotFound("Nie znaleziono poświadczenia KSeF dla wskazanego użytkownika i tenanta.");
 

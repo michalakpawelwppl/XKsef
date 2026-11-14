@@ -101,7 +101,7 @@ public sealed class KsefAuthenticationController : ControllerBase
     }
 
     [HttpPost("authenticate-token")]
-    public async Task<IActionResult> AuthenticateTokenAsync(CancellationToken cancellationToken)
+    public async Task<IActionResult> AuthenticateTokenAsync([FromBody] AuthenticatePreferredKsefCredentialRequest request, CancellationToken cancellationToken)
     {
         if (HttpContext.Items["TenantId"] is not Guid tenantId || tenantId == Guid.Empty) return Forbid();
 
@@ -111,8 +111,10 @@ public sealed class KsefAuthenticationController : ControllerBase
         var taxEntity = await _tenantService.GetTaxEntityAsync(tenantId, cancellationToken);
         if (taxEntity is null) return NotFound("Nie znaleziono podmiotu podatkowego dla wybranego tenanta.");
 
-        KsefTokenInfo tokenInfo = await _credentialServiceClient.GetTokenInfoAsync(tenantId, userId, cancellationToken);
-        if (!tokenInfo.Exists || tokenInfo.CredentialId is not Guid credentialId || credentialId == Guid.Empty) return BadRequest("Nie skonfigurowano tokenu KSeF dla bieżącego użytkownika i tenanta.");
+        if (request is null || request.CredentialId == Guid.Empty) return BadRequest("Nieprawidłowy CredentialId.");
+        var validation = await ValidatePreferredAsync(request.CredentialId, "Token", tenantId, userId, taxEntity.Nip, cancellationToken);
+        if (validation is not null) return validation;
+        Guid credentialId = request.CredentialId;
 
         await _credentialServiceClient.AuthenticateTokenAsync(credentialId, tenantId, userId, taxEntity.Nip, cancellationToken);
 
@@ -136,13 +138,13 @@ public sealed class KsefAuthenticationController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.EncryptedPrivateKeyPem)) return BadRequest("Brak klucza prywatnego.");
         if (string.IsNullOrEmpty(request.Password)) return BadRequest("Brak hasła do klucza prywatnego.");
 
-        Guid credentialId = await _credentialServiceClient.SaveCertificateAsync(tenantId, userId, request.CertificatePem, request.EncryptedPrivateKeyPem, request.Password, cancellationToken);
+        Guid credentialId = await _credentialServiceClient.SaveCertificateAsync(userId, request.CertificatePem, request.EncryptedPrivateKeyPem, request.Password, cancellationToken);
 
         return Ok(new { CredentialId = credentialId });
     }
 
     [HttpPost("authenticate-certificate")]
-    public async Task<IActionResult> AuthenticateCertificateAsync(CancellationToken cancellationToken)
+    public async Task<IActionResult> AuthenticateCertificateAsync([FromBody] AuthenticatePreferredKsefCredentialRequest request, CancellationToken cancellationToken)
     {
         if (HttpContext.Items["TenantId"] is not Guid tenantId || tenantId == Guid.Empty) return Forbid();
 
@@ -152,11 +154,23 @@ public sealed class KsefAuthenticationController : ControllerBase
         var taxEntity = await _tenantService.GetTaxEntityAsync(tenantId, cancellationToken);
         if (taxEntity is null) return NotFound("Nie znaleziono podmiotu podatkowego dla wybranego tenanta.");
 
-        KsefTokenInfo certificateInfo = await _credentialServiceClient.GetCertificateInfoAsync(tenantId, userId, cancellationToken);
-        if (!certificateInfo.Exists || certificateInfo.CredentialId is not Guid credentialId || credentialId == Guid.Empty) return BadRequest("Nie skonfigurowano certyfikatu KSeF dla bieżącego użytkownika i tenanta.");
+        if (request is null || request.CredentialId == Guid.Empty) return BadRequest("Nieprawidłowy CredentialId.");
+        var validation = await ValidatePreferredAsync(request.CredentialId, "Certificate", tenantId, userId, taxEntity.Nip, cancellationToken);
+        if (validation is not null) return validation;
+        Guid credentialId = request.CredentialId;
 
         await _credentialServiceClient.AuthenticateCertificateAsync(credentialId, tenantId, userId, taxEntity.Nip, cancellationToken);
 
         return Ok(new { Authenticated = true });
+    }
+    private async Task<IActionResult?> ValidatePreferredAsync(Guid credentialId, string expectedType, Guid tenantId, string userId, string nip, CancellationToken cancellationToken)
+    {
+        if (nip is null || nip.Length != 10 || !nip.All(char.IsAsciiDigit)) return Problem("Nieprawidłowy NIP podmiotu podatkowego.", statusCode: 500);
+        Guid? preferred = await _tenantService.GetPreferredKsefCredentialIdAsync(tenantId, userId, cancellationToken);
+        if (preferred is null) return BadRequest("Najpierw zapisz preferowane poświadczenie KSeF.");
+        if (preferred != credentialId) return Conflict("Wskazane poświadczenie różni się od zapisanej preferencji. Odśwież wybór.");
+        string? type = await _credentialServiceClient.GetCredentialTypeAsync(credentialId, tenantId, userId, nip, cancellationToken);
+        if (type != expectedType) return BadRequest("Wybrane poświadczenie jest niedostępne lub ma niewłaściwy typ.");
+        return null;
     }
 }

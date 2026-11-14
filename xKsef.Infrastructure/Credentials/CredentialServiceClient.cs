@@ -15,7 +15,7 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
         _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<Guid> SaveTokenAsync(Guid tenantId, string userId, string token, CancellationToken cancellationToken = default)
+    public async Task<Guid> SaveTokenAsync(Guid tenantId, string userId, string token, string contextNip, CancellationToken cancellationToken = default)
     {
         HttpClient client = _httpClientFactory.CreateClient("CredentialService");
 
@@ -23,7 +23,8 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
         {
             TenantId = tenantId,
             UserId = userId,
-            Token = token
+            Token = token,
+            ContextNip = contextNip
         };
 
         using HttpResponseMessage response = await client.PostAsJsonAsync("/internal/ksef-credentials/token", request, cancellationToken);
@@ -39,10 +40,10 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
         public Guid CredentialId { get; set; }
     }
 
-    public async Task<KsefTokenInfo> GetTokenInfoAsync(Guid tenantId, string userId, CancellationToken cancellationToken = default)
+    public async Task<KsefTokenInfo> GetTokenInfoAsync(Guid tenantId, string userId, string contextNip, CancellationToken cancellationToken = default)
     {
         HttpClient client = _httpClientFactory.CreateClient("CredentialService");
-        string url = $"/internal/ksef-credentials/token?tenantId={tenantId:D}&userId={Uri.EscapeDataString(userId)}";
+        string url = $"/internal/ksef-credentials/token?tenantId={tenantId:D}&userId={Uri.EscapeDataString(userId)}&contextNip={Uri.EscapeDataString(contextNip)}";
 
         using HttpResponseMessage response = await client.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -100,16 +101,14 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
         return result;
     }
 
-    public async Task<Guid> SaveCertificateAsync(Guid tenantId, string userId, string certificatePem, string encryptedPrivateKeyPem, string password, CancellationToken cancellationToken = default)
+    public async Task<Guid> SaveCertificateAsync(string userId, string certificatePem, string encryptedPrivateKeyPem, string password, CancellationToken cancellationToken = default)
     {
-        if (tenantId == Guid.Empty) throw new ArgumentException("Nieprawidłowy TenantId.", nameof(tenantId));
         if (string.IsNullOrWhiteSpace(userId)) throw new ArgumentException("Brak UserId.", nameof(userId));
 
         var client = _httpClientFactory.CreateClient("CredentialService");
 
         var request = new
         {
-            TenantId = tenantId,
             UserId = userId,
             CertificatePem = certificatePem,
             EncryptedPrivateKeyPem = encryptedPrivateKeyPem,
@@ -127,11 +126,11 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
         return result.CredentialId;
     }
 
-    public async Task<KsefTokenInfo> GetCertificateInfoAsync(Guid tenantId, string userId, CancellationToken cancellationToken = default)
+    public async Task<KsefTokenInfo> GetCertificateInfoAsync(string userId, CancellationToken cancellationToken = default)
     {
         HttpClient client = _httpClientFactory.CreateClient("CredentialService");
 
-        KsefTokenInfo? result = await client.GetFromJsonAsync<KsefTokenInfo>($"/internal/ksef-credentials/certificate?tenantId={tenantId}&userId={Uri.EscapeDataString(userId)}", cancellationToken);
+        KsefTokenInfo? result = await client.GetFromJsonAsync<KsefTokenInfo>($"/internal/ksef-credentials/certificate?userId={Uri.EscapeDataString(userId)}", cancellationToken);
 
         return result ?? throw new InvalidOperationException("CredentialService nie zwrócił informacji o certyfikacie KSeF.");
     }
@@ -151,7 +150,15 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<string?> GetCredentialTypeAsync(Guid credentialId, Guid tenantId, string userId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<KsefCertificateInfo>> GetCertificatesAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        var client = _httpClientFactory.CreateClient("CredentialService");
+        return await client.GetFromJsonAsync<KsefCertificateInfo[]>($"/internal/ksef-credentials/certificates?userId={Uri.EscapeDataString(userId)}", cancellationToken)
+            ?? throw new InvalidOperationException("CredentialService returned no certificate list.");
+    }
+
+    public async Task<string?> GetCredentialTypeAsync(Guid credentialId, Guid tenantId, string userId, string contextNip, CancellationToken cancellationToken = default)
     {
         if (credentialId == Guid.Empty) throw new ArgumentException("Nieprawidłowy CredentialId.", nameof(credentialId));
         if (tenantId == Guid.Empty) throw new ArgumentException("Nieprawidłowy TenantId.", nameof(tenantId));
@@ -159,7 +166,7 @@ public sealed class CredentialServiceClient : ICredentialServiceClient
 
         HttpClient client = _httpClientFactory.CreateClient("CredentialService");
 
-        string url = $"/internal/ksef-credentials/credential-type?credentialId={credentialId:D}&tenantId={tenantId:D}&userId={Uri.EscapeDataString(userId)}";
+        string url = $"/internal/ksef-credentials/credential-type?credentialId={credentialId:D}&tenantId={tenantId:D}&userId={Uri.EscapeDataString(userId)}&contextNip={Uri.EscapeDataString(contextNip)}";
 
         using HttpResponseMessage response = await client.GetAsync(url, cancellationToken);
 

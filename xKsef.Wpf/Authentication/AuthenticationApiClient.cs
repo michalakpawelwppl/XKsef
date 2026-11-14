@@ -34,7 +34,7 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
         return loginResponse;
     }
 
-    public async Task AuthenticateKsefTokenAsync(ApiRequestContext context)
+    public async Task AuthenticateKsefTokenAsync(ApiRequestContext context, Guid credentialId)
     {
         using var request = CreateRequest(HttpMethod.Post, "api/ksef/authentication/authenticate-token", context, ApiRequestScope.TenantHeader);
         using HttpResponseMessage response = await _httpClient.SendAsync(request, context.CancellationToken);
@@ -61,7 +61,7 @@ public sealed class AuthenticationApiClient : IAuthenticationApiClient
         return result.CredentialId;
     }
 
-    public async Task AuthenticateKsefCertificateAsync(ApiRequestContext context)
+    public async Task AuthenticateKsefCertificateAsync(ApiRequestContext context, Guid credentialId)
     {
         using var request = CreateRequest(HttpMethod.Post, "api/ksef/authentication/authenticate-certificate", context, ApiRequestScope.TenantHeader);
         using HttpResponseMessage response = await _httpClient.SendAsync(request, context.CancellationToken);

@@ -7,6 +7,6 @@ public interface ITenantApiClient
     Task<TenantCreationResult> CreateTenantAsync(ApiRequestContext context, string name, string nip, string taxEntityName, string userLogin);
     Task<IReadOnlyList<TenantDto>> GetMyTenantsAsync(ApiRequestContext context);
     Task<IReadOnlyList<TenantDto>> GetMyTenantsAsync(CancellationToken cancellationToken = default);
-    Task<Guid?> GetPreferredKsefCredentialIdAsync(Guid tenantId, CancellationToken cancellationToken = default);
-    Task SetPreferredKsefCredentialIdAsync(Guid tenantId, Guid? credentialId, CancellationToken cancellationToken = default);
+    Task<Guid?> GetPreferredKsefCredentialIdAsync(ApiRequestContext context);
+    Task SetPreferredKsefCredentialIdAsync(ApiRequestContext context, Guid? credentialId);
 }

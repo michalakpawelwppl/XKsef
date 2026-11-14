@@ -4,7 +4,11 @@ public sealed class KsefCredential
 {
     public Guid Id { get; set; }
 
-    public Guid TenantId { get; set; }
+    public string Name { get; set; } = string.Empty;
+
+    public bool IsActive { get; set; } = true;
+
+    public Guid? TenantId { get; set; }
 
     public string UserId { get; set; } = string.Empty;
 
@@ -22,8 +26,6 @@ public sealed class KsefCredential
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     
-    public DateTimeOffset? ValidUntil { get; set; }
-    public Guid? SourceCredentialId { get; set; }
 
     public string? ContextNip { get; set; }
 }

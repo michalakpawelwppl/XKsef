@@ -75,27 +75,31 @@ public sealed class TenantApiClient : ITenantApiClient
         return await response.Content.ReadFromJsonAsync<List<TenantDto>>(cancellationToken: cancellationToken) ?? new List<TenantDto>();
     }
 
-    public async Task<Guid?> GetPreferredKsefCredentialIdAsync(Guid tenantId, CancellationToken cancellationToken = default)
+    public async Task<Guid?> GetPreferredKsefCredentialIdAsync(ApiRequestContext context)
     {
-        if (tenantId == Guid.Empty) throw new ArgumentException("Nieprawidłowy TenantId.", nameof(tenantId));
-
-        using HttpResponseMessage response = await _httpClient.GetAsync($"api/tenants/{tenantId:D}/preferred-ksef-credential", cancellationToken);
-
+        using var request = PreferenceRequest(HttpMethod.Get, context);
+        using var response = await _httpClient.SendAsync(request, context.CancellationToken);
         response.EnsureSuccessStatusCode();
-
-        PreferredKsefCredentialResponse? result = await response.Content.ReadFromJsonAsync<PreferredKsefCredentialResponse>(cancellationToken: cancellationToken);
-
+        var result = await response.Content.ReadFromJsonAsync<PreferredKsefCredentialResponse>(cancellationToken: context.CancellationToken);
         return result?.CredentialId;
     }
-    public async Task SetPreferredKsefCredentialIdAsync(Guid tenantId, Guid? credentialId, CancellationToken cancellationToken = default)
+
+    public async Task SetPreferredKsefCredentialIdAsync(ApiRequestContext context, Guid? credentialId)
     {
-        if (tenantId == Guid.Empty) throw new ArgumentException("Nieprawidłowy TenantId.", nameof(tenantId));
-        if (credentialId == Guid.Empty) throw new ArgumentException("Nieprawidłowy CredentialId.", nameof(credentialId));
-
-        var request = new SetPreferredKsefCredentialRequest(credentialId);
-
-        using HttpResponseMessage response = await _httpClient.PutAsJsonAsync($"api/tenants/{tenantId:D}/preferred-ksef-credential", request, cancellationToken);
-
+        if (credentialId == Guid.Empty) throw new ArgumentException("CredentialId is required.", nameof(credentialId));
+        using var request = PreferenceRequest(HttpMethod.Put, context);
+        request.Content = JsonContent.Create(new SetPreferredKsefCredentialRequest(credentialId));
+        using var response = await _httpClient.SendAsync(request, context.CancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    private static HttpRequestMessage PreferenceRequest(HttpMethod method, ApiRequestContext context)
+    {
+        context.CancellationToken.ThrowIfCancellationRequested();
+        if (context.Scope != ApiRequestScope.TenantRoute || context.TenantId is not Guid tenantId || tenantId == Guid.Empty || string.IsNullOrWhiteSpace(context.AccessToken))
+            throw new InvalidOperationException("Preferences require an authenticated tenant route context.");
+        var request = new HttpRequestMessage(method, $"api/tenants/{tenantId:D}/preferred-ksef-credential");
+        request.SetApiRequestContext(context);
+        return request;
     }
 }

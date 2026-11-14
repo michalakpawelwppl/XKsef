@@ -6,8 +6,7 @@ public class KsefOptions
 
     public string Environment { get; set; } = "TEST";
 
-    public string BaseUrl { get; set; } =
-        "https://api-test.ksef.mf.gov.pl";
+    public string BaseUrl { get; set; } = string.Empty;
 
     public string Nip { get; set; } = string.Empty;
 

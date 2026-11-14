@@ -7,6 +7,7 @@ using xKsef.Api.ExceptionHandlers;
 using xKsef.Application.Invoices.Visualization;
 using xKsef.Infrastructure;
 using xKsef.Infrastructure.Identity;
+using xKsef.Infrastructure.Credentials;
 using xKsef.Infrastructure.Invoices.Visualization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,6 +24,7 @@ builder.Services.AddScoped<CredentialManagementAuthorizationFilter>();
 
 builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
 builder.Services.AddExceptionHandler<ExternalServiceRateLimitExceptionHandler>();
+builder.Services.AddExceptionHandler<CredentialServiceExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -89,7 +91,8 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddHttpClient("CredentialService", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["CredentialService:BaseUrl"] ?? throw new InvalidOperationException("Brak adresu CredentialService."));
-}).ConfigurePrimaryHttpMessageHandler(() =>
+    client.Timeout = Timeout.InfiniteTimeSpan; // The environment handler owns the same 100-second deadline.
+}).AddHttpMessageHandler<CredentialServiceEnvironmentHandler>().ConfigurePrimaryHttpMessageHandler(() =>
 {
     string thumbprint = builder.Configuration["CredentialService:ClientCertificateThumbprint"]?.Replace(" ", "").ToUpperInvariant() ?? throw new InvalidOperationException("Brak Thumbprint certyfikatu klienta.");
 
