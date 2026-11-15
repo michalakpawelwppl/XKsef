@@ -1,6 +1,6 @@
 export type InvoiceDirection = 'sales' | 'purchase';
 
-// Read-only browser model. Amounts are displayed, not recalculated here.
+// Read-only browser model. Exact fields are authoritative for financial display and comparisons.
 export interface Invoice {
   readonly id: string;
   readonly direction: InvoiceDirection;
@@ -16,4 +16,7 @@ export interface Invoice {
   readonly netAmount: number | null;
   readonly vatAmount: number | null;
   readonly grossAmount: number;
+  readonly netAmountExact: string | null;
+  readonly vatAmountExact: string | null;
+  readonly grossAmountExact: string;
 }

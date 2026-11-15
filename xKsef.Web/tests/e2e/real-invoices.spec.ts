@@ -1,23 +1,11 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
+import { result, send } from '../fixtures/invoiceApi';
 
 const A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-function result(label: string) {
-  const items = [123, -12.3, 0].map((grossAmount, index) => ({
-    ksefNumber: `KSEF-${index}`, invoiceNumber: `${label}-${index}`, sellerName: 'Sprzedawca', sellerNip: '1234567890',
-    buyerName: 'Nabywca', buyerNip: '0987654321', issueDate: `2026-11-0${index + 1}`, invoicingDate: null,
-    currency: 'PLN', grossAmount, netAmount: index === 2 ? null : grossAmount, vatAmount: 0, vatAmountPln: 0,
-    grossAmountExact: grossAmount.toFixed(2), netAmountExact: index === 2 ? null : grossAmount.toFixed(2), vatAmountExact: '0.00', vatAmountPlnExact: '0.00',
-  }));
-  return { items, summaries: [{ currency: 'PLN', invoiceCount: 3, netTotal: null, vatTotal: 0, grossTotal: 110.7, missingNetCount: 1, missingVatCount: 0 }] };
-}
-async function send(route: Route, body: unknown, status = 200) {
-  try { await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }); }
-  catch { /* The browser can abort an old tenant request before the mock replies. */ }
-}
-async function mockApi(page: Page, options: { emptyTenants?: boolean; query?: (route: Route, index: number) => Promise<void> } = {}) {
-  let authenticated = true;
+async function mockApi(page: Page, options: { emptyTenants?: boolean; loginRequired?: boolean; query?: (route: Route, index: number) => Promise<void> } = {}) {
+  let authenticated = !options.loginRequired; let user = 'user-A';
   const queries: { url: URL; tenant: string | undefined; method: string }[] = [];
   const paths: string[] = [];
   await page.route('**/api/**', async route => {
@@ -27,10 +15,17 @@ async function mockApi(page: Page, options: { emptyTenants?: boolean; query?: (r
       expect(request.method()).toBe('POST'); expect(request.headers()['x-csrf-token']).toBe('fixture-token');
       authenticated = false; return route.fulfill({ status: 204 });
     }
+    if (url.pathname === '/api/browser-auth/login' && options.loginRequired) {
+      expect(request.method()).toBe('POST'); expect(request.headers()['x-csrf-token']).toBe('fixture-token');
+      user = (request.postDataJSON() as { login: string }).login; expect(['user-A', 'user-B']).toContain(user);
+      authenticated = true; return send(route, { userId: user, login: user });
+    }
     expect(request.method()).toBe('GET');
-    if (url.pathname === '/api/browser-auth/me') return send(route, { userId: 'user-1', login: 'Testowy użytkownik' }, authenticated ? 200 : 401);
+    if (url.pathname === '/api/browser-auth/me') return send(route, options.loginRequired ? { userId: user, login: user } : { userId: 'user-1', login: 'Testowy użytkownik' }, authenticated ? 200 : 401);
     if (url.pathname === '/api/browser-auth/csrf') return send(route, { requestToken: 'fixture-token', headerName: 'X-CSRF-TOKEN' });
-    if (url.pathname === '/api/tenants') return send(route, options.emptyTenants ? [] : [
+    if (url.pathname === '/api/tenants') return send(route, options.emptyTenants ? [] : options.loginRequired ? [
+      { id: user === 'user-A' ? A : B, name: `Firma ${user}`, role: 'User' },
+    ] : [
       { id: A, name: 'Firma A', role: 'Admin' }, { id: B, name: 'Firma B', role: 'User' },
     ]);
     expect(url.pathname).toBe('/api/invoices/query');
@@ -42,6 +37,184 @@ async function mockApi(page: Page, options: { emptyTenants?: boolean; query?: (r
   return { queries, paths };
 }
 const invoiceCell = (page: Page, text: string) => page.getByRole('gridcell', { name: text, exact: true });
+
+function precisionInvoices() {
+  const base = result('BASE').items[0];
+  const values = [
+    ['HI', '9999999999999999.99'], ['LO', '9999999999999999.98'],
+    ['NEG-HI', '-9999999999999999.99'], ['NEG-LO', '-9999999999999999.98'],
+    ['ZERO', '0.00'], ['SMALL', '123.45'], ['MISSING', null],
+  ] as const;
+  return { items: values.map(([label, value]) => ({ ...base, ksefNumber: `KSEF-PREC-${label}`, invoiceNumber: `PREC-${label}`,
+    netAmount: value === null ? null : Number(value), vatAmount: value === null ? null : Number(value), grossAmount: Number(value ?? '0.00'),
+    netAmountExact: value, vatAmountExact: value, grossAmountExact: value ?? '0.00',
+  })), summaries: [{ currency: 'PLN', invoiceCount: 7, netTotal: null, vatTotal: null, grossTotal: 123.45, missingNetCount: 1, missingVatCount: 1 }] };
+}
+
+test('untrusted invoice text remains inert in counterparty cells, invoice numbers and tooltips', async ({ page }) => {
+  const number = '<img src=x onerror="window.__invoiceXss=1">';
+  const party = '<svg onload="window.__invoiceXss=2"></svg><script>window.__invoiceXss=3</script>';
+  await page.addInitScript(() => { Object.assign(window, { __invoiceXss: 0 }); });
+  const body = result('INERT'); body.items = [{ ...body.items[0], invoiceNumber: number, buyerName: party }];
+  await mockApi(page, { query: route => send(route, body) }); await page.goto('/app/invoices/sales');
+  for (const [column, text] of [['invoiceNumber', number], ['counterpartyName', party]]) {
+    const target = page.locator(`[role="row"][row-id] [role="gridcell"][col-id="${column}"]`);
+    await expect(target).toHaveText(text); await expect(target.locator('img,svg,script')).toHaveCount(0);
+    await target.hover(); const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toHaveText(text); await expect(tooltip.locator('img,svg,script')).toHaveCount(0);
+    await page.getByRole('heading', { name: 'Faktury sprzedaży', exact: true }).hover(); await expect(tooltip).toHaveCount(0);
+  }
+  expect(await page.evaluate(() => (window as unknown as { __invoiceXss: number }).__invoiceXss)).toBe(0);
+});
+
+for (const column of ['netAmount', 'vatAmount', 'grossAmount'] as const) {
+  test(`exact ${column} display, sort, filtering, summary membership and native clipboard retain adjacent large cents`, async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await mockApi(page, { query: route => send(route, precisionInvoices()) }); await page.goto('/app/invoices/sales');
+    await expect(page.getByTestId('summary-count')).toHaveText('7');
+    const cell = (label: string) => page.getByRole('row').filter({ has: invoiceCell(page, `PREC-${label}`) }).locator(`[col-id="${column}"]`);
+    const normalize = (value: string) => value.replace(/\s/g, '');
+    await expect.poll(async () => normalize(await cell('HI').innerText())).toBe('9999999999999999,99');
+    await expect.poll(async () => normalize(await cell('LO').innerText())).toBe('9999999999999999,98');
+    await expect(cell('ZERO')).toHaveText('0,00'); await expect(cell('SMALL')).toHaveText('123,45');
+    await expect(cell('MISSING')).toHaveText(column === 'grossAmount' ? '0,00' : '');
+    const header = page.locator(`[role="columnheader"][col-id="${column}"]`);
+    const names = page.locator('[role="row"][row-id] [col-id="invoiceNumber"]');
+    await header.click(); await expect(header).toHaveAttribute('aria-sort', 'ascending');
+    await expect(names).toHaveText((column === 'grossAmount'
+      ? ['NEG-HI', 'NEG-LO', 'ZERO', 'MISSING', 'SMALL', 'LO', 'HI']
+      : ['NEG-HI', 'NEG-LO', 'ZERO', 'SMALL', 'LO', 'HI', 'MISSING']).map(label => `PREC-${label}`));
+    await header.click(); await expect(header).toHaveAttribute('aria-sort', 'descending');
+    await expect(names).toHaveText((column === 'grossAmount'
+      ? ['HI', 'LO', 'SMALL', 'ZERO', 'MISSING', 'NEG-LO', 'NEG-HI']
+      : ['MISSING', 'HI', 'LO', 'SMALL', 'ZERO', 'NEG-LO', 'NEG-HI']).map(label => `PREC-${label}`));
+    for (const label of ['HI', 'NEG-HI', 'ZERO']) {
+      await cell(label).click();
+      const displayed = await cell(label).innerText();
+      await page.evaluate(() => navigator.clipboard.writeText('sentinel'));
+      await cell(label).evaluate(element => {
+        const range = document.createRange(); range.selectNodeContents(element);
+        const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+      });
+      await page.keyboard.press('Control+c');
+      // Native browser copying may turn a non-breaking grouping space into a regular space.
+      await expect.poll(async () => (await page.evaluate(() => navigator.clipboard.readText())).replace(/[\u00a0\u202f]/g, ' ')).toBe(displayed.replace(/[\u00a0\u202f]/g, ' '));
+    }
+    const filter = page.locator(`.ag-floating-filter[col-id="${column}"] input`);
+    for (const [label, value] of [['LO', '9999999999999999,98'], ['HI', '9999999999999999,99'], ['NEG-HI', '-9999999999999999,99']] as const) {
+      await filter.fill(value); await expect(page.getByTestId('visible-count')).toHaveText('1');
+      await expect(invoiceCell(page, `PREC-${label}`)).toBeVisible();
+      await expect(page.getByTestId('summary-count')).toHaveText('1');
+      await expect.poll(async () => normalize(await page.getByTestId('summary-gross').innerText())).toBe(value);
+    }
+    await filter.fill('0'); await expect(page.getByTestId('summary-count')).toHaveText(column === 'grossAmount' ? '2' : '1');
+    await expect(invoiceCell(page, 'PREC-ZERO')).toBeVisible(); await expect(page.getByTestId('summary-gross')).toHaveText('0,00');
+    await filter.fill(''); await expect(page.getByTestId('visible-count')).toHaveText('7'); await expect(page.getByTestId('summary-gross')).toHaveText('123,45');
+  });
+}
+
+test('exact amount filter preserves numeric inequalities, ranges and missing-value semantics', async ({ page }) => {
+  await mockApi(page, { query: route => send(route, precisionInvoices()) }); await page.goto('/app/invoices/sales');
+  await expect(page.getByTestId('summary-count')).toHaveText('7');
+  await page.locator('.ag-floating-filter[col-id="netAmount"]').getByRole('button', { name: 'Otwórz Menu Filtrów', exact: true }).click();
+  const filter = page.locator('.ag-filter-body');
+  const choose = async (name: string) => {
+    await page.locator('.ag-filter-select .ag-picker-field-wrapper').click();
+    await page.getByRole('option', { name, exact: true }).click();
+  };
+  const check = async (labels: string[], total: string) => {
+    await expect(page.getByTestId('summary-count')).toHaveText(String(labels.length));
+    await expect(page.locator('[role="row"][row-id] [col-id="invoiceNumber"]')).toHaveText(labels.map(label => `PREC-${label}`));
+    await expect.poll(async () => (await page.getByTestId('summary-gross').innerText()).replace(/\s/g, '')).toBe(total);
+  };
+  for (const [operator, labels] of [
+    ['Więcej niż', ['HI']], ['Więcej lub równe', ['HI', 'LO']],
+    ['Mniej niż', ['NEG-HI', 'NEG-LO', 'ZERO', 'SMALL']],
+    ['Mniej lub równe', ['LO', 'NEG-HI', 'NEG-LO', 'ZERO', 'SMALL']],
+    ['Nie równa się', ['HI', 'NEG-HI', 'NEG-LO', 'ZERO', 'SMALL']],
+  ] as const) {
+    await choose(operator); await filter.locator('input').first().fill('9999999999999999,98');
+    await expect(page.getByTestId('summary-count')).toHaveText(String(labels.length));
+    await expect(page.locator('[role="row"][row-id] [col-id="invoiceNumber"]')).toHaveText(labels.map(label => `PREC-${label}`));
+  }
+  await choose('Pomiędzy');
+  await filter.locator('input').first().fill('9999999999999999,97');
+  await filter.locator('input').nth(1).fill('9999999999999999,99');
+  // Preserve the existing numeric filter's exclusive range boundaries.
+  await check(['LO'], '9999999999999999,98');
+  await choose('Puste'); await check(['MISSING'], '0,00');
+  await choose('Niepuste'); await check(['HI', 'LO', 'NEG-HI', 'NEG-LO', 'ZERO', 'SMALL'], '123,45');
+});
+
+for (const status of [200, 401, 403, 503]) {
+  test(`A logs out and B logs in without exposing A state when cancelled A HTTP ${status} arrives`, async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-11-14T12:00:00+01:00'));
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const state = await mockApi(page, { loginRequired: true, query: async (route, index) => {
+      if (index === 3) { await gate; return send(route, result('OWNER-A-LATE'), status); }
+      if (route.request().headers()['x-tenant-id'] === A) return send(route, result('OWNER-A'));
+      const body = result('OWNER-B');
+      body.items = [{ ...body.items[0], grossAmount: 777, grossAmountExact: '777.00', netAmount: 700, netAmountExact: '700.00', vatAmount: 77, vatAmountExact: '77.00' }];
+      body.summaries = [{ currency: 'PLN', invoiceCount: 1, netTotal: 700, vatTotal: 77, grossTotal: 777, missingNetCount: 0, missingVatCount: 0 }];
+      return send(route, body);
+    } });
+    const loginUser = async (user: string) => {
+      await page.getByLabel('Login', { exact: true }).fill(user);
+      await page.getByLabel('Hasło', { exact: true }).fill('Synthetic-Password-123!');
+      await page.getByRole('button', { name: 'Zaloguj', exact: true }).click();
+      await expect(page.locator('.session-user')).toHaveText(user);
+    };
+    await page.goto('/login'); await loginUser('user-A'); await expect(invoiceCell(page, 'OWNER-A-0')).toBeVisible();
+    await page.getByLabel('Rodzaj daty', { exact: true }).selectOption('InvoicingDate');
+    await page.getByLabel('Data od', { exact: true }).fill('2020-01-01');
+    await page.getByRole('button', { name: 'Filtruj', exact: true }).click();
+    await expect.poll(() => state.queries.length).toBe(2); await expect(invoiceCell(page, 'OWNER-A-0')).toBeVisible();
+    await page.getByLabel('Szukaj w fakturach').fill('OWNER-A-0');
+    await page.locator('.ag-floating-filter[col-id="grossAmount"] input').fill('123');
+    await expect(page.getByTestId('summary-gross')).toHaveText('123,00');
+    await page.getByRole('row').filter({ has: invoiceCell(page, 'OWNER-A-0') }).getByRole('checkbox').check();
+    await expect(page.getByTestId('selected-count')).toHaveText('1');
+    await page.getByLabel('Data od', { exact: true }).fill('2027-01-01');
+    await page.getByRole('button', { name: 'Filtruj', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Data od nie może być późniejsza');
+    await page.getByRole('button', { name: 'Odśwież listę', exact: true }).click();
+    await expect.poll(() => state.queries.length).toBe(3);
+    await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+    await expect(page).toHaveURL(/\/login$/); await expect(page.getByRole('grid')).toHaveCount(0);
+    await expect(page.getByTestId('summary-gross')).toHaveCount(0); await expect(page.getByRole('alert')).toHaveCount(0);
+    // Observe every DOM mutation after logout, including nodes inserted and removed within a single delivery.
+    await page.evaluate(() => {
+      const violations: string[] = []; (window as unknown as { oldContextLeaks: string[] }).oldContextLeaks = violations;
+      const forbidden = /OWNER-A|user-A|Data od nie może być późniejsza|Sesja wygasła|Brak uprawnień|chwilowo niedostępna/;
+      new MutationObserver(records => {
+        const text = [document.body.textContent ?? '', ...records.flatMap(record => Array.from(record.addedNodes, node => node.textContent ?? ''))].join('\n');
+        if (forbidden.test(text)) violations.push('Old identity, invoice or error text');
+        if (Array.from(document.querySelectorAll('[data-testid="summary-gross"]')).some(node => /^(123,00|110,70)$/.test(node.textContent ?? ''))) violations.push('Old totals');
+        if (document.querySelector('[data-testid="selected-count"]')?.textContent === '1') violations.push('Old selection');
+        const from = document.querySelector<HTMLInputElement>('input[type="date"]');
+        if (from && ['2020-01-01', '2027-01-01'].includes(from.value)) violations.push('Old date filter');
+        if (document.querySelector<HTMLInputElement>('input[type="search"]')?.value.includes('OWNER-A')) violations.push('Old search');
+        if (document.querySelector<HTMLInputElement>('.ag-floating-filter[col-id="grossAmount"] input')?.value === '123') violations.push('Old numeric filter');
+        if (document.querySelector<HTMLSelectElement>('form.invoice-filters select')?.value === 'InvoicingDate') violations.push('Old date kind');
+      }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+    });
+    await loginUser('user-B'); await expect(invoiceCell(page, 'OWNER-B-0')).toBeVisible();
+    await expect(page.getByLabel('Aktywny tenant')).toHaveValue(B);
+    await expect(page.getByTestId('summary-gross')).toHaveText('777,00'); await expect(page.getByTestId('summary-count')).toHaveText('1');
+    await expect(page.getByTestId('selected-count')).toHaveText('0'); await expect(page.getByLabel('Szukaj w fakturach')).toHaveValue('');
+    await expect(page.locator('.ag-floating-filter[col-id="grossAmount"] input')).toHaveValue('');
+    await expect(page.getByLabel('Rodzaj daty', { exact: true })).toHaveValue('IssueDate');
+    await expect(page.getByLabel('Data od', { exact: true })).toHaveValue('2026-10-16');
+    const late = page.waitForResponse(response => response.url() === state.queries[2].url.href && response.status() === status);
+    release(); await (await late).finished();
+    // Let the response microtasks and DOM observer finish before inspecting the complete observation history.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    await expect(page.locator('.session-user')).toHaveText('user-B'); await expect(invoiceCell(page, 'OWNER-B-0')).toBeVisible();
+    await expect(page.getByTestId('summary-gross')).toHaveText('777,00'); await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page.getByLabel('Aktywny tenant')).toHaveValue(B); expect(state.queries).toHaveLength(4);
+    expect(await page.evaluate(() => (window as unknown as { oldContextLeaks: string[] }).oldContextLeaks)).toEqual([]);
+  });
+}
 
 test('summaries use exact currency amounts after grid filters and ignore selection and VAT in PLN', async ({ page }) => {
   const base = result('MONEY').items[0];
@@ -111,7 +284,11 @@ test('date filters, date kinds and invoice directions replace summaries instead 
   await expect(page.getByTestId('summary-count')).toHaveText('2');
   await page.getByLabel('Rodzaj daty', { exact: true }).selectOption('InvoicingDate'); await page.getByRole('button', { name: 'Filtruj', exact: true }).click();
   await expect(page.getByTestId('summary-count')).toHaveText('1');
-  await page.getByRole('link', { name: 'Faktury zakupu', exact: true }).click(); await expect(page.getByTestId('summary-count')).toHaveText('1');
+  const purchase = page.waitForRequest(request => new URL(request.url()).pathname === '/api/invoices/query' && new URL(request.url()).searchParams.get('direction') === 'Purchase');
+  await page.getByRole('link', { name: 'Faktury zakupu', exact: true }).click(); await purchase;
+  await expect(page.getByRole('heading', { name: 'Faktury zakupu', exact: true })).toBeVisible();
+  await expect(invoiceCell(page, 'QUERY-4-0')).toBeVisible(); await expect(invoiceCell(page, 'QUERY-3-0')).toHaveCount(0);
+  await expect(page.getByTestId('summary-count')).toHaveText('1');
   expect(state.queries.at(-1)!.url.searchParams.get('direction')).toBe('Purchase');
 });
 

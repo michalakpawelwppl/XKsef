@@ -16,6 +16,22 @@ describe('Business-independent table adapter', () => {
     expect(compareTableValues(2, 10)).toBeLessThan(0); expect(compareTableValues(-50, 0)).toBeLessThan(0);
     expect(compareTableValues(null, 0)).not.toBe(0); expect(compareTableValues(null, null)).toBe(0);
   });
+  it('sorts BigInt cents in both directions, including adjacent large amounts, corrections, zero and null', () => {
+    const low = 999999999999999998n; const high = low + 1n;
+    const values = [high, 0n, low, null, -low, -high];
+    expect([...values].sort(compareTableValues)).toEqual([-high, -low, 0n, low, high, null]);
+    expect([...values].sort((a, b) => -compareTableValues(a, b))).toEqual([null, high, low, 0n, -low, -high]);
+    expect(compareTableValues(low, low)).toBe(0);
+  });
+  it('uses the native BigInt filter with inverse Polish minor-unit input and display functions', () => {
+    const [column] = toGridColumns([{ id: 'amount', header: 'Kwota', kind: 'money', value: () => 999999999999999999n }]);
+    expect(column.filter).toBe('agBigIntColumnFilter'); expect(column.type).toBe('numericColumn');
+    const params = column.filterParams as { bigintParser(value: string): bigint; bigintFormatter(value: bigint | null): string | null; maxNumConditions: number };
+    const cents = params.bigintParser('9 999 999 999 999 999,99');
+    expect(cents).toBe(999999999999999999n);
+    expect(params.bigintFormatter(cents)?.replace(/\s/g, '')).toBe('9999999999999999,99');
+    expect(params.bigintFormatter(null)).toBeNull(); expect(params.maxNumConditions).toBe(1);
+  });
   it('uses Polish alphabetical ordering and natural numeric ordering for text', () => {
     expect(compareTableValues('Łódź', 'Warszawa')).toBeLessThan(0); expect(compareTableValues('FV/2', 'FV/10')).toBeLessThan(0);
   });

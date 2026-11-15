@@ -1,9 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AG_GRID_LOCALE_PL_PL } from '@ag-grid-community/locale';
 import {
   CellStyleModule, ClientSideRowModelModule, ClientSideRowModelApiModule, DateFilterModule, LocaleModule,
-  NumberFilterModule, QuickFilterModule, RenderApiModule, RowApiModule, RowSelectionModule,
+  BigIntFilterModule, NumberFilterModule, QuickFilterModule, RenderApiModule, RowApiModule, RowSelectionModule,
   TextFilterModule, TooltipModule, ValidationModule, themeQuartz,
 } from 'ag-grid-community';
 import type { ColDef, GetRowIdParams, RowSelectionOptions } from 'ag-grid-community';
@@ -12,9 +12,9 @@ import { toGridColumns } from './gridColumns';
 
 // Only the Community modules used by this prototype. No export module is registered.
 const modules = [ClientSideRowModelModule, ClientSideRowModelApiModule, RenderApiModule, RowApiModule, RowSelectionModule, TextFilterModule,
-  NumberFilterModule, DateFilterModule, QuickFilterModule, LocaleModule, CellStyleModule, TooltipModule,
+  BigIntFilterModule, NumberFilterModule, DateFilterModule, QuickFilterModule, LocaleModule, CellStyleModule, TooltipModule,
   ...(import.meta.env.DEV ? [ValidationModule] : [])];
-const locale = { ...AG_GRID_LOCALE_PL_PL, noMatchingRows: 'Brak danych spełniających warunki' };
+const locale = { ...AG_GRID_LOCALE_PL_PL, noMatchingRows: 'Brak danych spełniających warunki', bigintFilter: 'Filtr kwot', invalidBigInt: 'Podaj poprawną kwotę z dokładnością do grosza.' };
 const theme = themeQuartz.withParams({
   accentColor: '#245ca0', backgroundColor: '#ffffff', foregroundColor: '#21334b',
   headerBackgroundColor: '#f4f7fb', borderColor: '#dce4ed',
@@ -40,8 +40,21 @@ export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', 
   const resolveRowId = useCallback((params: GetRowIdParams<T>) => getRowId(params.data), [getRowId]);
   const rowData = useMemo(() => Array.from(rows), [rows]);
   const columnDefs = useMemo(() => toGridColumns(columns), [columns]);
+  const activeCell = useRef<string | null>(null);
+  const getCopyText = useCallback((columnId: string, value: unknown): string => {
+  const column = columns.find(item => item.id === columnId);
+  const text = value === null || value === undefined ? '' : column?.format ? column.format(value) : String(value);
+  return column?.kind === 'money' ? text.replace(/[\s\u00A0\u202F]/g, '') : text;
+}, [columns]);
   return (
-    <div className="data-table" aria-label={label}>
+    <div className="data-table" aria-label={label} onKeyDown={event => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return;
+  if (activeCell.current === null) return;
+  if (window.getSelection()?.toString()) return;
+
+  event.preventDefault();
+  void navigator.clipboard.writeText(activeCell.current);
+}}>
       <AgGridReact<T>
         modules={modules}
         theme={theme}
@@ -58,6 +71,10 @@ export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', 
         rowBuffer={6}
         animateRows={false}
         ensureDomOrder
+        enableCellTextSelection
+onCellClicked={event => {
+  activeCell.current = getCopyText(event.colDef.colId ?? '', event.value);
+}}
         getRowId={resolveRowId}
         quickFilterText={searchText}
         cacheQuickFilter

@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
@@ -24,6 +25,7 @@ using xKsef.Api.Controllers;
 using xKsef.Api.ExceptionHandlers;
 using xKsef.Application.Authentication;
 using xKsef.Application.Credentials;
+using xKsef.Application.Invoices.Pdf;
 using xKsef.Domain.Tenants;
 using xKsef.Infrastructure;
 using xKsef.Infrastructure.Credentials;
@@ -41,6 +43,8 @@ public sealed partial class BrowserAuthenticationTests
         public string Login => Prefix + "-one"; public string OtherLogin => Prefix + "-two";
         public string KeyPath { get; } = Path.Combine(Path.GetTempPath(), "xksef-browser-tests-" + Guid.NewGuid().ToString("N"));
         public BrowserTestClock Clock { get; } = new(); public BrowserRequestGate Gate { get; } = new(); public StoreFailure Failure { get; } = new();
+        public InvoiceReadSqlInterceptor InvoiceSql { get; } = new();
+        public DocumentPdfGenerator Pdf { get; } = new();
         public IHost Host { get; private set; } = null!; public HttpClient Client { get; private set; } = null!;
         private IConfiguration Configuration { get; set; } = null!; private readonly List<Guid> _tenants = []; private readonly List<Guid> _taxEntities = [];
         public IServiceScope Scope() => Host.Services.CreateScope();
@@ -52,7 +56,7 @@ public sealed partial class BrowserAuthenticationTests
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Jwt:Issuer"] = "browser-tests", ["Jwt:Audience"] = "browser-tests", ["Jwt:ExpirationMinutes"] = "5",
-                    ["Jwt:SigningKey"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                    ["Jwt:SigningKey"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
                     ["DataProtection:KeyRingPath"] = f.KeyPath, ["DataProtection:ApplicationName"] = f.Prefix,
                     ["BrowserSessions:Cleanup:Enabled"] = "false"
                 }).Build();
@@ -80,7 +84,10 @@ public sealed partial class BrowserAuthenticationTests
                 .ConfigureServices((context, services) =>
                 {
                     services.AddSingleton(Configuration); services.AddDatabaseInfrastructure(Configuration);
-                    services.AddDbContext<AppDbContext>(options => options.AddInterceptors(Failure));
+                    services.AddDbContext<AppDbContext>(options => options.AddInterceptors(Failure, InvoiceSql));
+                    // Query uses the real SQL query service; all legacy/KSeF invoice operations fail immediately.
+                    services.AddScoped<IInvoiceService, UnexpectedInvoiceService>();
+                    services.AddSingleton<IInvoicePdfGenerator>(Pdf);
                     new IdentityBuilder(typeof(ApplicationUser), services).AddDefaultTokenProviders();
                     services.AddSingleton<TimeProvider>(Clock); services.AddSingleton(Gate);
                     services.AddControllers().AddApplicationPart(typeof(AuthController).Assembly).AddApplicationPart(typeof(BrowserTestController).Assembly);
@@ -104,12 +111,13 @@ public sealed partial class BrowserAuthenticationTests
             await RestartAsync();
         }
         public async Task RestartAsync() { Client.Dispose(); await Host.StopAsync(); Host.Dispose(); await StartAsync(); }
-        public async Task<Guid> CreateTenantAsync()
+        public async Task<Guid> CreateTenantAsync(string? userId = null)
         {
+            Assert.Contains(userId ?? UserId, new[] { UserId, OtherId });
             using var scope = Scope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var tax = new TaxEntity { Id = Guid.NewGuid(), Nip = "8" + RandomNumberGenerator.GetInt32(100000000, 999999999).ToString(System.Globalization.CultureInfo.InvariantCulture), Name = Prefix };
             var tenant = new Tenant { Name = Prefix, TaxEntity = tax }; _taxEntities.Add(tax.Id); _tenants.Add(tenant.Id);
-            db.Tenants.Add(tenant); db.UserTenants.Add(new UserTenant { TenantId = tenant.Id, UserId = UserId, Role = "User" }); await db.SaveChangesAsync(); return tenant.Id;
+            db.Tenants.Add(tenant); db.UserTenants.Add(new UserTenant { TenantId = tenant.Id, UserId = userId ?? UserId, Role = "User" }); await db.SaveChangesAsync(); return tenant.Id;
         }
         public async ValueTask DisposeAsync()
         {
@@ -119,11 +127,15 @@ public sealed partial class BrowserAuthenticationTests
                 if (Host is not null)
                 {
                     using var scope = Scope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    await db.Invoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
                     await db.UserTenants.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
                     await db.Tenants.Where(row => _tenants.Contains(row.Id)).ExecuteDeleteAsync();
                     await db.TaxEntities.Where(row => _taxEntities.Contains(row.Id) && !db.Tenants.Any(tenant => tenant.TaxEntityId == row.Id)).ExecuteDeleteAsync();
                     await db.Users.Where(user => user.UserName != null && user.UserName.StartsWith(Prefix)).ExecuteDeleteAsync();
                     Assert.False(await db.Users.AnyAsync(user => user.UserName != null && user.UserName.StartsWith(Prefix)));
+                    Assert.False(await db.Invoices.AnyAsync(row => _tenants.Contains(row.TenantId)));
+                    Assert.False(await db.Tenants.AnyAsync(row => _tenants.Contains(row.Id)));
+                    Assert.False(await db.TaxEntities.AnyAsync(row => _taxEntities.Contains(row.Id)));
                 }
             }
             finally
@@ -194,6 +206,9 @@ public sealed class BrowserTestController(BrowserRequestGate gate) : ControllerB
 {
     [HttpGet("identity")]
     public IActionResult IdentityInfo() => Ok(new { UserId = User.FindFirstValue(ClaimTypes.NameIdentifier), Identities = User.Identities.Count() });
+    [HttpGet("jwt-identity")]
+    [Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme)]
+    public IActionResult JwtIdentityInfo() => IdentityInfo();
     [HttpPost("write")]
     public IActionResult Write() { Interlocked.Increment(ref gate.Writes); return IdentityInfo(); }
     [HttpGet("tenant")]

@@ -1,5 +1,6 @@
 import type { TableColumn } from '../../shared/table/TableColumn';
-import { formatAmount, formatCalendarDate, formatLocalTimestamp, parseCalendarDate, parseOffsetTimestamp } from '../../shared/formatting/polish';
+import { formatCalendarDate, formatLocalTimestamp, parseCalendarDate, parseOffsetTimestamp } from '../../shared/formatting/polish';
+import { formatMoneyCell, parseMoney } from '../../shared/formatting/money';
 import type { Invoice, InvoiceDirection } from './Invoice';
 
 export function invoiceColumns(direction: InvoiceDirection): readonly TableColumn<Invoice>[] {
@@ -12,8 +13,8 @@ export function invoiceColumns(direction: InvoiceDirection): readonly TableColum
     { id: 'issueDate', header: 'Data wystawienia', kind: 'date', value: row => parseCalendarDate(row.issueDate), format: formatCalendarDate, width: 145 },
     { id: 'invoicingDate', header: 'Data przyjęcia do KSeF', kind: 'date', value: row => parseOffsetTimestamp(row.invoicingDate), format: formatLocalTimestamp, width: 180 },
     { id: 'currency', header: 'Waluta', kind: 'text', value: row => row.currency, width: 90 },
-    { id: 'netAmount', header: 'Netto', kind: 'number', value: row => row.netAmount, format: formatAmount, width: 125 },
-    { id: 'vatAmount', header: 'VAT', kind: 'number', value: row => row.vatAmount, format: formatAmount, width: 115 },
-    { id: 'grossAmount', header: 'Brutto', kind: 'number', value: row => row.grossAmount, format: formatAmount, width: 125 },
+    { id: 'netAmount', header: 'Netto', kind: 'money', value: row => row.netAmountExact === null ? null : parseMoney(row.netAmountExact), format: formatMoneyCell, width: 125 },
+    { id: 'vatAmount', header: 'VAT', kind: 'money', value: row => row.vatAmountExact === null ? null : parseMoney(row.vatAmountExact), format: formatMoneyCell, width: 115 },
+    { id: 'grossAmount', header: 'Brutto', kind: 'money', value: row => parseMoney(row.grossAmountExact), format: formatMoneyCell, width: 125 },
   ];
 }

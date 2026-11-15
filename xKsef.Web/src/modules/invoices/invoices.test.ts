@@ -19,6 +19,17 @@ describe('Invoice-specific table configuration', () => {
     for (const column of invoiceColumns('sales')) column.format?.(column.value(row));
     expect(row.invoicingDate).toBe('2026-11-14T08:30:00+01:00'); expect(row.issueDate).toBe('2026-11-14');
   });
+  it.each(['netAmount', 'vatAmount', 'grossAmount'] as const)('uses the exact %s field even when adjacent amounts share the same approximate number', name => {
+    const low = '9999999999999999.98'; const high = '9999999999999999.99';
+    expect(Number(low)).toBe(Number(high));
+    const base = createDemoInvoices(1, 'sales')[0];
+    const column = invoiceColumns('sales').find(column => column.id === name)!;
+    const first = { ...base, [name]: Number(low), [name + 'Exact']: low };
+    const second = { ...base, [name]: Number(high), [name + 'Exact']: high };
+    expect(column.kind).toBe('money'); expect(column.value(first)).toBe(999999999999999998n); expect(column.value(second)).toBe(999999999999999999n);
+    expect(column.format!(column.value(first)).replace(/\s/g, '')).toBe('9999999999999999,98');
+    expect(column.format!(column.value(second)).replace(/\s/g, '')).toBe('9999999999999999,99');
+  });
   it('includes corrections, multiple currencies, real zero and missing metadata', () => {
     const rows = createDemoInvoices(10, 'sales');
     expect(rows[1].netAmount).toBeLessThan(0); expect(rows[2].netAmount).toBe(0); expect(rows[3].netAmount).toBeNull(); expect(rows[3].invoicingDate).toBeNull();

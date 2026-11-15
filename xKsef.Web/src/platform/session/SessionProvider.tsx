@@ -3,11 +3,16 @@ import type { ReactNode } from 'react';
 import { ApiClient } from '../api/ApiClient';
 import { RequestContext } from './RequestContext';
 import { BrowserSessionStore } from './BrowserSessionStore';
+import { connectBrowserSession } from './BrowserSessionSync';
 
 const SessionContext = createContext<BrowserSessionStore | null>(null);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [store] = useState(() => { const context = new RequestContext(); return new BrowserSessionStore(context, new ApiClient(context)); });
-  useEffect(() => { void store.restore(); return () => store.cancelPending(); }, [store]);
+  useEffect(() => {
+    const synchronization = connectBrowserSession(store);
+    synchronization.restore();
+    return () => { synchronization.disconnect(); store.cancelPending(); };
+  }, [store]);
   return <SessionContext.Provider value={store}>{children}</SessionContext.Provider>;
 }
 export function useSession() {

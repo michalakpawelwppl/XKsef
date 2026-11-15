@@ -1,4 +1,5 @@
 import type { Invoice, InvoiceDirection } from './Invoice';
+import { moneyToDecimal } from '../../shared/formatting/money';
 
 const parties = ['Alfa i Synowie sp. z o.o.', 'Pracownia Żółty Tulipan', 'Łódzkie Centrum Usług', 'Przedsiębiorstwo Handlowo-Usługowe Północ i Południe sp. z o.o.'];
 const currencies = ['PLN', 'EUR', 'USD'];
@@ -28,6 +29,9 @@ export function createDemoInvoices(count: number, direction: InvoiceDirection): 
       netAmount: missing ? null : netCents / 100,
       vatAmount: missing ? null : vatCents / 100,
       grossAmount: (netCents + vatCents) / 100,
+      netAmountExact: missing ? null : moneyToDecimal(BigInt(netCents)),
+      vatAmountExact: missing ? null : moneyToDecimal(BigInt(vatCents)),
+      grossAmountExact: moneyToDecimal(BigInt(netCents + vatCents)),
     };
   });
 }
