@@ -52,7 +52,13 @@ test('cookie login, /me, lazy invoice module and ERP shell without web storage',
   await login(page); await expect(page.getByRole('grid', { name: 'Faktury sprzedaży' })).toBeVisible();
   await expect(page.getByLabel('Aktywny tenant')).toHaveValue(A); await expect(page.getByText('Rola: Admin', { exact: true })).toBeVisible();
   expect(state.posts).toEqual([{ path: '/api/browser-auth/login', csrf: 'csrf-1-false' }]); expect(state.tokens).toBe(2);
-  for (const label of ['Kontrahenci', 'Banki i rozrachunki', 'Księgowość', 'Podatki', 'Środki trwałe', 'Kadry i płace', 'Administracja']) await expect(page.getByRole('button', { name: label })).toBeDisabled();
+  await page.getByRole('button', { name: 'Rozwiń menu', exact: true }).click();
+  for (const label of ['Banki i rozrachunki', 'Księgowość', 'Podatki', 'Środki trwałe', 'Kadry i płace', 'Administracja']) await expect(page.getByRole('button', { name: `${label} W przygotowaniu`, exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Kartoteki', exact: true }).click();
+  const contractors = page.getByRole('link', { name: 'Kontrahenci', exact: true });
+  await expect(contractors).toBeVisible();
+  await expect(contractors).toBeEnabled();
+  await expect(contractors).toHaveAttribute('href', '/app/contractors');
   expect(await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }))).toEqual({ local: [], session: [] });
   expect(state.paths.filter(path => path.startsWith('/api/invoices'))).toEqual(['/api/invoices/query']);
   await page.screenshot({ path: 'test-results/browser-shell.png', fullPage: true });

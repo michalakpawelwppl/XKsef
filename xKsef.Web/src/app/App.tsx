@@ -5,6 +5,7 @@ import { AppShell } from './AppShell';
 const LoginPage = lazy(() => import('../modules/auth/AuthPage').then(module => ({ default: module.AuthPage })));
 const Prototype = lazy(() => import('../modules/invoices/InvoicePrototypePage').then(module => ({ default: module.InvoicePrototypePage })));
 const InvoicesPage = lazy(() => import('../modules/invoices/InvoicesPage').then(module => ({ default: module.InvoicesPage })));
+const ContractorsPage = lazy(() => import('../modules/contractors/ContractorsPage').then(module => ({ default: module.ContractorsPage })));
 function Pending() { return <main className="status-page" role="status">Wczytywanie…</main>; }
 function SessionLayout() { return <SessionProvider><SessionGate /></SessionProvider>; }
 function SessionGate() {
@@ -31,6 +32,7 @@ export function App() {
         <Route path="invoices" element={<Navigate to="sales" replace />} />
         <Route path="invoices/sales" element={<InvoicesPage key="sales" direction="Sales" />} />
         <Route path="invoices/purchase" element={<InvoicesPage key="purchase" direction="Purchase" />} />
+        <Route path="contractors" element={<ContractorsPage />} />
       </Route>
       <Route path="*" element={<main><h1>Nie znaleziono strony</h1><Link to="/">Strona główna</Link></main>} />
     </Route>

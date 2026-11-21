@@ -39,6 +39,14 @@ async function mockApi(page: Page, options: { emptyTenants?: boolean; loginRequi
 const invoiceCell = (page: Page, text: string) => page.locator('[role="gridcell"][col-id="invoiceNumber"]').filter({ has: page.getByText(text, { exact: true }) });
 const cellValue = (cell: Locator) => cell.locator('.copy-cell-text');
 
+async function openPurchases(page: Page) {
+  const menu = page.getByTitle('Handel', { exact: true });
+  await expect(menu).toBeVisible();
+  if (await menu.getAttribute('aria-expanded') !== 'true') await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('link', { name: 'Zakup', exact: true }).click();
+}
+
 function precisionInvoices() {
   const base = result('BASE').items[0];
   const values = [
@@ -286,7 +294,7 @@ test('date filters, date kinds and invoice directions replace summaries instead 
   await page.getByLabel('Rodzaj daty', { exact: true }).selectOption('InvoicingDate'); await page.getByRole('button', { name: 'Filtruj', exact: true }).click();
   await expect(page.getByTestId('summary-count')).toHaveText('1');
   const purchase = page.waitForRequest(request => new URL(request.url()).pathname === '/api/invoices/query' && new URL(request.url()).searchParams.get('direction') === 'Purchase');
-  await page.getByRole('link', { name: 'Faktury zakupu', exact: true }).click(); await purchase;
+  await openPurchases(page); await purchase;
   await expect(page.getByRole('heading', { name: 'Faktury zakupu', exact: true })).toBeVisible();
   await expect(invoiceCell(page, 'QUERY-4-0')).toBeVisible(); await expect(invoiceCell(page, 'QUERY-3-0')).toHaveCount(0);
   await expect(page.getByTestId('summary-count')).toHaveText('1');
@@ -308,7 +316,7 @@ test('redirects to sales, queries 30 days and navigates to purchases without imp
   await expect(page).toHaveURL(/\/app\/invoices\/sales$/);
   await expect(invoiceCell(page, 'A-Sales-0')).toBeVisible();
   expect(Object.fromEntries(state.queries[0].url.searchParams)).toEqual({ from: '2026-10-16', to: '2026-11-14', direction: 'Sales', dateKind: 'IssueDate' });
-  await page.getByRole('link', { name: 'Faktury zakupu', exact: true }).click();
+  await openPurchases(page);
   await expect(page).toHaveURL(/\/app\/invoices\/purchase$/); await expect(invoiceCell(page, 'A-Purchase-0')).toBeVisible();
   await expect(invoiceCell(page, 'A-Sales-0')).toHaveCount(0);
   await expect(page.getByRole('columnheader', { name: 'NIP sprzedawcy' })).toBeVisible();
@@ -406,7 +414,7 @@ for (const contextChange of ['tenant', 'direction'] as const) for (const status 
     } });
     await page.goto('/app/invoices/sales'); await expect.poll(() => state.queries.length).toBe(1);
     if (contextChange === 'tenant') await page.getByLabel('Aktywny tenant').selectOption(B);
-    else await page.getByRole('link', { name: 'Faktury zakupu', exact: true }).click();
+    else await openPurchases(page);
     await expect(invoiceCell(page, 'CURRENT-0')).toBeVisible();
     const response = page.waitForResponse(res => res.url() === state.queries[0].url.href && res.status() === status);
     release(); await (await response).finished();
