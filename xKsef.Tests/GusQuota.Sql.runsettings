@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <XKSEF_RUN_GUS_QUOTA_SQL_TESTS>1</XKSEF_RUN_GUS_QUOTA_SQL_TESTS>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

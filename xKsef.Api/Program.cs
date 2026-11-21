@@ -1,5 +1,6 @@
 ﻿using xKsef.Api.Hosting;
 using xKsef.Api.Authentication;
+using xKsef.Infrastructure.Gus;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.RateLimiting;
 using xKsef.Api.Authorization;
@@ -19,12 +20,14 @@ builder.Services.AddControllers();
 //builder.Services.AddScoped<IInvoiceService, FakeInvoiceService>();
 builder.Services.AddKsefInfrastructure(builder.Configuration);
 builder.Services.AddDatabaseInfrastructure(builder.Configuration);
+builder.Services.AddGusBirInfrastructure(builder.Configuration);
 builder.Services.AddScoped<TenantAuthorizationFilter>();
 builder.Services.AddScoped<CredentialManagementAuthorizationFilter>();
 
 builder.Services.AddExceptionHandler<BrowserSessionExceptionHandler>();
 builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
 builder.Services.AddExceptionHandler<ExternalServiceRateLimitExceptionHandler>();
+builder.Services.AddExceptionHandler<GusExceptionHandler>();
 builder.Services.AddExceptionHandler<CredentialServiceExceptionHandler>();
 builder.Services.AddProblemDetails();
 

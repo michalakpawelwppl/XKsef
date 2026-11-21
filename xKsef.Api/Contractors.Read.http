@@ -1,0 +1,14 @@
+# Use the API URL from the running Visual Studio profile.
+@baseUrl = https://localhost:7127
+
+# Fill these placeholders locally using the current authenticated session.
+# Use the same Bearer token and X-Tenant-Id as a successful React API request.
+# Do not share the token in chat or commit it to Git.
+@jwt = PASTE_CURRENT_SESSION_JWT_HERE
+@tenantId = PASTE_SELECTED_AUTHORIZED_TENANT_GUID_HERE
+
+### Read contractors for the selected tenant (no data changes)
+GET {{baseUrl}}/api/contractors
+Accept: application/json
+Authorization: Bearer {{jwt}}
+X-Tenant-Id: {{tenantId}}

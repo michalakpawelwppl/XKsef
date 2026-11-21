@@ -25,6 +25,7 @@ using xKsef.Api.Controllers;
 using xKsef.Api.ExceptionHandlers;
 using xKsef.Application.Authentication;
 using xKsef.Application.Credentials;
+using xKsef.Application.Gus;
 using xKsef.Application.Invoices.Pdf;
 using xKsef.Domain.Tenants;
 using xKsef.Infrastructure;
@@ -45,6 +46,7 @@ public sealed partial class BrowserAuthenticationTests
         public BrowserTestClock Clock { get; } = new(); public BrowserRequestGate Gate { get; } = new(); public StoreFailure Failure { get; } = new();
         public InvoiceReadSqlInterceptor InvoiceSql { get; } = new();
         public DocumentPdfGenerator Pdf { get; } = new();
+        public SecurityGusClient Gus { get; } = new();
         public IHost Host { get; private set; } = null!; public HttpClient Client { get; private set; } = null!;
         private IConfiguration Configuration { get; set; } = null!; private readonly List<Guid> _tenants = []; private readonly List<Guid> _taxEntities = [];
         public IServiceScope Scope() => Host.Services.CreateScope();
@@ -82,12 +84,18 @@ public sealed partial class BrowserAuthenticationTests
                     services.AddSingleton<IInvoicePdfGenerator>(Pdf);
                     new IdentityBuilder(typeof(ApplicationUser), services).AddDefaultTokenProviders();
                     services.AddSingleton<TimeProvider>(Clock); services.AddSingleton(Gate);
+                    services.AddHttpContextAccessor();
+                    services.AddSingleton<IGusBirClient>(provider =>
+                    {
+                        Gus.ContextAccessor = provider.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>();
+                        return Gus;
+                    });
                     services.AddControllers().AddApplicationPart(typeof(AuthController).Assembly).AddApplicationPart(typeof(BrowserTestController).Assembly);
                     services.AddScoped<TenantAuthorizationFilter>(); services.AddScoped<CredentialManagementAuthorizationFilter>(); services.AddApplicationOperatorAuthorization();
                     services.AddApiAuthentication(Configuration, context.HostingEnvironment);
                     services.AddRegistrationRateLimiting();
                     services.AddRateLimiter(options => { options.RejectionStatusCode = 429; options.AddFixedWindowLimiter("login", limiter => { limiter.PermitLimit = 5; limiter.Window = TimeSpan.FromMinutes(1); limiter.QueueLimit = 0; }); });
-                    services.AddExceptionHandler<BrowserSessionExceptionHandler>(); services.AddProblemDetails();
+                    services.AddExceptionHandler<BrowserSessionExceptionHandler>(); services.AddExceptionHandler<GusExceptionHandler>(); services.AddProblemDetails();
                     services.AddHttpClient("CredentialService").ConfigurePrimaryHttpMessageHandler(() => new RejectExternalCalls());
                     services.AddScoped<ICredentialServiceClient, CredentialServiceClient>();
                 }).Configure(app =>
@@ -120,6 +128,13 @@ public sealed partial class BrowserAuthenticationTests
                 {
                     using var scope = Scope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     await db.Invoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
+                    var contractors = db.Contractors.Where(row => _tenants.Contains(row.TenantId));
+                    var contractorData = db.ContractorsData.Where(row => contractors.Any(contractor => contractor.Id == row.ContractorId));
+                    var addresses = db.Addresses.Where(row => contractorData.Any(data => data.Id == row.ContractorsDataId));
+                    await db.AddressesData.Where(row => addresses.Any(address => address.Id == row.AddressId)).ExecuteDeleteAsync();
+                    await addresses.ExecuteDeleteAsync();
+                    await contractorData.ExecuteDeleteAsync();
+                    await contractors.ExecuteDeleteAsync();
                     await db.UserTenants.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
                     await db.Tenants.Where(row => _tenants.Contains(row.Id)).ExecuteDeleteAsync();
                     await db.TaxEntities.Where(row => _taxEntities.Contains(row.Id) && !db.Tenants.Any(tenant => tenant.TaxEntityId == row.Id)).ExecuteDeleteAsync();

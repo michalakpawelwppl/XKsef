@@ -247,6 +247,7 @@ public sealed class RegistrationTests
             // Test-only equivalents for the new SQL Server session table's collation and binary CHECK.
             api._connection.CreateCollation("Latin1_General_100_BIN2", (left, right) => string.Compare(left, right, StringComparison.Ordinal));
             api._connection.CreateFunction<byte[], int>("DATALENGTH", data => data.Length);
+            api._connection.CreateFunction<string, int>("LEN", value => value.TrimEnd(' ').Length);
             var key = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {

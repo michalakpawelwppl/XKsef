@@ -4,15 +4,19 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using xKsef.Application.Authentication;
+using xKsef.Application.Contractors;
 using xKsef.Application.Credentials;
+using xKsef.Application.Gus;
 using xKsef.Application.Invoices;
 using xKsef.Application.Invoices.Pdf;
 using xKsef.Application.Tenants;
 using xKsef.Infrastructure.Authentication;
 using xKsef.Infrastructure.Credentials;
 using xKsef.Infrastructure.Identity;
+using xKsef.Infrastructure.Gus;
 using xKsef.Infrastructure.Invoices;
 using xKsef.Infrastructure.Invoices.Pdf;
 using xKsef.Infrastructure.Ksef;
@@ -20,6 +24,7 @@ using xKsef.Infrastructure.Ksef.Authentication;
 using xKsef.Infrastructure.Ksef.Configuration;
 using xKsef.Infrastructure.Ksef.Invoices;
 using xKsef.Infrastructure.Persistence;
+using xKsef.Infrastructure.Persistence.Repositories;
 using xKsef.Infrastructure.Tenants;
 
 namespace xKsef.Infrastructure;
@@ -75,6 +80,9 @@ public static class DependencyInjection
     {
         var connectionString = configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Brak konfiguracji połączenia z bazą danych.");
         services.AddDbContext<AppDbContext>(options => options.UseSqlServer(connectionString));
+        services.AddScoped<IGusQuotaStore, SqlGusQuotaStore>();
+        services.AddScoped<IGusRateLimiter, GusRateLimiter>();
+        services.TryAddSingleton<TimeProvider>(TimeProvider.System);
         services.AddIdentityCore<ApplicationUser>(options =>
         {
             options.Password.RequiredLength = 12;
@@ -95,6 +103,8 @@ public static class DependencyInjection
         services.AddScoped<IUserCreationService, UserCreationService>();
         services.AddScoped<DevelopmentUserSeeder>();
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+        services.AddScoped<IContractorRepository, ContractorRepository>();
+        services.AddScoped<IContractorService, ContractorService>();
         services.AddScoped<IInvoiceQueryService, InvoiceQueryService>();
         services.AddScoped<InvoiceImportService>();
         services.AddScoped<IInvoiceImportTransaction, InvoiceImportTransaction>();

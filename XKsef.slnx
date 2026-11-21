@@ -5,6 +5,7 @@
   <Project Path="xKsef.CredentialService/xKsef.CredentialService.csproj" Id="a4cd84d8-c5b1-4df0-9f17-e6b996cfd4e1" />
   <Project Path="xKsef.DevelopmentTools/xKsef.DevelopmentTools.csproj" Id="50af98c7-f8ae-4510-b0ce-2494ba41058a" />
   <Project Path="XKsef.Domain/xKsef.Domain.csproj" />
+  <Project Path="xKsef.GusBir.ManualTests/xKsef.GusBir.ManualTests.csproj" />
   <Project Path="xKsef.Infrastructure/xKsef.Infrastructure.csproj" />
   <Project Path="xKsef.Tests/xKsef.Tests.csproj" Id="395d5969-3013-4330-8d72-636a33f9b8d5" />
   <Project Path="xKsef.Wpf/xKsef.Wpf.csproj" />

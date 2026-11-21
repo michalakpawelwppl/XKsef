@@ -17,10 +17,138 @@ namespace xKsef.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.14")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+            modelBuilder.Entity("Address", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AddressType")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ContractorsDataId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContractorsDataId", "AddressType")
+                        .IsUnique();
+
+                    b.ToTable("Addresses", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Addresses_AddressType", "[AddressType] IN (1)");
+                        });
+                });
+
+            modelBuilder.Entity("AddressesData", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AddressId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ApartmentNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("BuildingNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("nvarchar(2)");
+
+                    b.Property<string>("PostalCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("Street")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AddressId")
+                        .IsUnique();
+
+                    b.ToTable("AddressesData", (string)null);
+                });
+
+            modelBuilder.Entity("ContractorsData", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ContractorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("EuVatNumber")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("IsEuVatRegistered")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("KrsNumber")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("Nip")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("OtherTaxNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Regon")
+                        .HasMaxLength(14)
+                        .HasColumnType("nvarchar(14)");
+
+                    b.Property<string>("ShortName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContractorId")
+                        .IsUnique();
+
+                    b.ToTable("ContractorsData", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ContractorsData_EuVatRegistration", "([IsEuVatRegistered] = 0 AND [EuVatNumber] IS NULL) OR ([IsEuVatRegistered] = 1 AND [EuVatNumber] IS NOT NULL AND LEN(LTRIM(RTRIM([EuVatNumber]))) > 0)");
+
+                            t.HasCheckConstraint("CK_ContractorsData_FullName_NotEmpty", "LEN(LTRIM(RTRIM([FullName]))) > 0");
+
+                            t.HasCheckConstraint("CK_ContractorsData_ShortName_NotEmpty", "LEN(LTRIM(RTRIM([ShortName]))) > 0");
+                        });
+                });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
                 {
@@ -153,6 +281,30 @@ namespace xKsef.Infrastructure.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("AspNetUserTokens", (string)null);
+                });
+
+            modelBuilder.Entity("xKsef.Domain.Contractors.Contractor", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("Contractors", (string)null);
                 });
 
             modelBuilder.Entity("xKsef.Domain.Invoices.StoredInvoice", b =>
@@ -420,6 +572,30 @@ namespace xKsef.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("xKsef.Infrastructure.Gus.GusCallPermitEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<byte>("Environment")
+                        .HasColumnType("tinyint");
+
+                    b.Property<DateTime>("GrantedAtUtc")
+                        .HasColumnType("datetime2(7)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Environment", "GrantedAtUtc");
+
+                    b.ToTable("GusCallPermits", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_GusCallPermits_Environment", "[Environment] IN (0, 1)");
+                        });
+                });
+
             modelBuilder.Entity("xKsef.Infrastructure.Identity.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
@@ -487,6 +663,33 @@ namespace xKsef.Infrastructure.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("Address", b =>
+                {
+                    b.HasOne("ContractorsData", null)
+                        .WithMany()
+                        .HasForeignKey("ContractorsDataId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AddressesData", b =>
+                {
+                    b.HasOne("Address", null)
+                        .WithOne()
+                        .HasForeignKey("AddressesData", "AddressId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ContractorsData", b =>
+                {
+                    b.HasOne("xKsef.Domain.Contractors.Contractor", null)
+                        .WithOne()
+                        .HasForeignKey("ContractorsData", "ContractorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -535,6 +738,15 @@ namespace xKsef.Infrastructure.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("xKsef.Domain.Contractors.Contractor", b =>
+                {
+                    b.HasOne("xKsef.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
