@@ -1,5 +1,7 @@
 # Credentials come from Visual Studio process environment variables; never commit their values.
 @xKsef.Api_HostAddress = https://localhost:7127
+@tenantId = {{$processEnv XKSEF_TENANT_ID}}
+@contractorId = {{$processEnv XKSEF_CONTRACTOR_ID}}
 
 GET {{xKsef.Api_HostAddress}}/weatherforecast/
 Accept: application/json
@@ -10,7 +12,7 @@ GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
 
 ###
 GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-30&direction=Sales
-X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+X-Tenant-Id: {{tenantId}}
 Authorization : Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
 ###
 GET https://localhost:7127/api/invoices?from=2026-10-01&to=2026-10-11&direction=Purchase
@@ -21,8 +23,8 @@ GET {{xKsef.Api_HostAddress}}/api/ksef-test/invoice-count
 
 ###
 
-@ksefNumber=string
-GET {{xKsef.Api_HostAddress}}/api/invoices/1234567890-20261012-6EE7E8C00000-2E/xml
+@ksefNumber = {{$processEnv XKSEF_INVOICE_KSEF_NUMBER}}
+GET {{xKsef.Api_HostAddress}}/api/invoices/{{ksefNumber}}/xml
 
 ###
 
@@ -33,7 +35,7 @@ Authorization : Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
 POST {{xKsef.Api_HostAddress}}/api/auth/login
 Content-Type: application/json
 {
-  "login": "testadmin",
+  "login": "{{$processEnv XKSEF_API_LOGIN}}",
   "password": "{{$processEnv XKSEF_API_PASSWORD}}"
 }
 
@@ -48,7 +50,7 @@ Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
 
 ###
 
-GET {{xKsef.Api_HostAddress}}/api/invoices/7841476673-20261018-7BBBE1C00000-7D/pdf
+GET {{xKsef.Api_HostAddress}}/api/invoices/{{ksefNumber}}/pdf
 Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
 ###
 
@@ -79,7 +81,7 @@ GET {{xKsef.Api_HostAddress}}/api/tenants
 
 POST {{xKsef.Api_HostAddress}}/api/ksef/authentication/prepare
 Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
-X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+X-Tenant-Id: {{tenantId}}
 ###
 
 POST {{xKsef.Api_HostAddress}}/api/ksef/authentication/prepare
@@ -116,7 +118,7 @@ Content-Type: application/json
 POST  {{xKsef.Api_HostAddress}}/api/invoices/import/ksef?from=2026-10-31&to=2026-10-31&direction=Purchase
 
 Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
-X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+X-Tenant-Id: {{tenantId}}
 ###
 {
   //DateOnly
@@ -135,7 +137,7 @@ GET {{xKsef.Api_HostAddress}}/api/tenants
 POST {{xKsef.Api_HostAddress}}/api/ksef/credentials/token
 Content-Type: application/json
 Authorization : Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
-X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+X-Tenant-Id: {{tenantId}}
 {
     "token": "{{$processEnv XKSEF_KSEF_TEST_TOKEN}}"
 }
@@ -143,6 +145,71 @@ X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
 
 GET {{xKsef.Api_HostAddress}}/api/ksef/credentials/token
 Authorization : Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
-X-Tenant-Id: 991223a5-3173-4c96-a8af-b515065eec49
+X-Tenant-Id: {{tenantId}}
+###
 
+POST {{xKsef.Api_HostAddress}}/api/contractors
+Content-Type: application/json
+Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
+X-Tenant-Id: {{tenantId}}
+{
+  "shortName": "TEST KONTRAHENT",
+  "fullName": "Firma Testowa Spółka z ograniczoną odpowiedzialnością",
+  "nip": null,
+  "regon": null,
+  "krsNumber": null,
+  "euVatNumber": null,
+  "otherTaxNumber": null,
+  "isEuVatRegistered": false,
+  "addresses": [
+    {
+      "addressType": 1,
+      "countryCode": "PL",
+      "city": "Poznań",
+      "postalCode": "60-001",
+      "street": "Testowa",
+      "buildingNumber": "10",
+      "apartmentNumber": "2"
+    }
+  ]
+}
+
+###
+
+PUT {{xKsef.Api_HostAddress}}/api/contractors/{{contractorId}}
+Content-Type: application/json
+Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
+X-Tenant-Id: {{tenantId}}
+{
+  "shortName": "TEST ZMIENIONY",
+  "fullName": "Firma Testowa Po Aktualizacji",
+  "nip": null,
+  "regon": null,
+  "krsNumber": null,
+  "euVatNumber": null,
+  "otherTaxNumber": null,
+  "isEuVatRegistered": false,
+  "isActive": true,
+  "addresses": [
+    {
+      "addressType": 1,
+      "countryCode": "PL",
+      "city": "Warszawa",
+      "postalCode": "60-001",
+      "street": "Testowa",
+      "buildingNumber": "25",
+      "apartmentNumber": "2"
+    }
+  ]
+}
+###
+
+GET {{xKsef.Api_HostAddress}}/api/contractors
+Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
+X-Tenant-Id: {{tenantId}}
+###
+
+GET {{xKsef.Api_HostAddress}}/api/contractors/{{contractorId}}
+Authorization: Bearer {{$processEnv XKSEF_API_BEARER_TOKEN}}
+X-Tenant-Id: {{tenantId}}
 ###
