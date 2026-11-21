@@ -53,6 +53,33 @@ export class ApiClient {
     }, snapshot);
     return await this.#decode(response, snapshot, options.signal) as T;
   }
+async requestBlob(path: string, options: RequestOptions): Promise<Blob> {
+  const snapshot = this.context.capture(options.scope);
+  this.#assertCurrent(snapshot, options.signal);
+
+  const headers = new Headers({ Accept: 'application/pdf' });
+  if (snapshot.tenantId) headers.set('X-Tenant-Id', snapshot.tenantId);
+
+  const response = await this.#fetch(path, {
+    method: 'GET',
+    headers,
+    signal: options.signal ? AbortSignal.any([snapshot.signal, options.signal]) : snapshot.signal,
+  }, snapshot);
+
+  if (!response.ok) {
+    await this.#decode(response, snapshot, options.signal);
+    throw new ApiError(response.status, statusMessage(response.status));
+  }
+
+  const contentType = response.headers.get('Content-Type') ?? '';
+  if (!contentType.toLowerCase().includes('application/pdf')) throw new ApiError(502, 'API nie zwróciło dokumentu PDF.');
+
+  const blob = await response.blob();
+  this.#assertCurrent(snapshot, options.signal);
+
+  return blob;
+}
+
   #assertCurrent(snapshot: RequestSnapshot, signal?: AbortSignal | null) {
     this.context.assertCurrent(snapshot);
     signal?.throwIfAborted();

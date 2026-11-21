@@ -40,4 +40,18 @@ export class InvoiceApiClient {
     const result = readInvoiceQueryResult(response);
     return { items: result.items.map(invoice => mapInvoiceToTable(invoice, context.tenantId!, direction)), summaries: result.summaries };
   }
+
+  async getInvoicePdf(ksefNumber: string, signal?: AbortSignal): Promise<Blob> {
+  if (!ksefNumber.trim()) throw new Error('Brak numeru KSeF faktury.');
+
+  const context = this.api.context.capture('tenant');
+  const path = `/api/invoices/${encodeURIComponent(ksefNumber)}/pdf`;
+
+  const pdf = await this.api.requestBlob(path, { scope: 'tenant', signal });
+
+  signal?.throwIfAborted();
+  this.api.context.assertCurrent(context);
+
+  return pdf;
+}
 }

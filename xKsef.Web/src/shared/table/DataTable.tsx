@@ -36,9 +36,10 @@ export interface DataTableProps<T> {
   readonly onVisibleCountChange?: (count: number) => void;
   readonly onFilteredRowsChange?: (rows: readonly T[]) => void;
     readonly onResetFilters?: () => void;
+    readonly onRowDoubleClick?: (row: T) => void;
 }
 
-export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', onSelectionChange, onVisibleCountChange, onFilteredRowsChange, onResetFilters }: DataTableProps<T>) {
+export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', onSelectionChange, onVisibleCountChange, onFilteredRowsChange, onResetFilters, onRowDoubleClick }: DataTableProps<T>) {
   const resolveRowId = useCallback((params: GetRowIdParams<T>) => getRowId(params.data), [getRowId]);
   const rowData = useMemo(() => Array.from(rows), [rows]);
   const columnDefs = useMemo(() => toGridColumns(columns), [columns]);
@@ -100,8 +101,19 @@ useEffect(() => {
         animateRows={false}
         ensureDomOrder
         enableCellTextSelection
+        onCellMouseOver={event => {
+  if (!onRowDoubleClick) return;
+  const cell = event.event?.target;
+  if (!(cell instanceof HTMLElement)) return;
+  const cellElement = cell.closest<HTMLElement>('.ag-cell');
+  if (cellElement) cellElement.title = 'Kliknij dwukrotnie, aby wyświetlić podgląd faktury.';
+}}
+
 onCellClicked={event => {
   activeCell.current = getCopyText(event.colDef.colId ?? '', event.value);
+}}
+onRowDoubleClicked={event => {
+  if (event.data) onRowDoubleClick?.(event.data);
 }}
         getRowId={resolveRowId}
         quickFilterText={searchText}
