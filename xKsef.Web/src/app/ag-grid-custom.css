@@ -1,0 +1,38 @@
+.ag-floating-filter[col-id="ag-Grid-SelectionColumn"] .ag-floating-filter-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+.ag-filter-reset-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 4px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.ag-filter-reset-button img {
+    width: 20px;
+    height: 20px;
+}
+
+.ag-filter-reset-button:hover {
+    background: var(--ag-row-hover-color, rgba(128, 128, 128, 0.12));
+}
+.ag-filter-reset-button:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.ag-filter-reset-button:disabled:hover {
+    background: transparent;
+}

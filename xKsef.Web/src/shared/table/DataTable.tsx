@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AgGridReact } from 'ag-grid-react';
 import { AG_GRID_LOCALE_PL_PL } from '@ag-grid-community/locale';
 import {
@@ -34,20 +35,47 @@ export interface DataTableProps<T> {
   readonly onSelectionChange?: (rows: readonly T[]) => void;
   readonly onVisibleCountChange?: (count: number) => void;
   readonly onFilteredRowsChange?: (rows: readonly T[]) => void;
+    readonly onResetFilters?: () => void;
 }
 
-export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', onSelectionChange, onVisibleCountChange, onFilteredRowsChange }: DataTableProps<T>) {
+export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', onSelectionChange, onVisibleCountChange, onFilteredRowsChange, onResetFilters }: DataTableProps<T>) {
   const resolveRowId = useCallback((params: GetRowIdParams<T>) => getRowId(params.data), [getRowId]);
   const rowData = useMemo(() => Array.from(rows), [rows]);
   const columnDefs = useMemo(() => toGridColumns(columns), [columns]);
   const activeCell = useRef<string | null>(null);
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const [hasActiveFilters, setHasActiveFilters] = useState(false);
+  const [resetFilterCell, setResetFilterCell] = useState<HTMLElement | null>(null);
+
+useEffect(() => {
+  const container = gridContainerRef.current;
+  if (!container) return;
+
+  const selector = '.ag-floating-filter[col-id="ag-Grid-SelectionColumn"] .ag-floating-filter-body';
+
+  const findCell = () => {
+    const cell = container.querySelector<HTMLElement>(selector);
+    setResetFilterCell(previous => previous === cell ? previous : cell);
+  };
+
+  const observer = new MutationObserver(findCell);
+  observer.observe(container, { childList: true, subtree: true });
+
+  findCell();
+
+  return () => {
+    observer.disconnect();
+    setResetFilterCell(null);
+  };
+}, []);
+
   const getCopyText = useCallback((columnId: string, value: unknown): string => {
   const column = columns.find(item => item.id === columnId);
   const text = value === null || value === undefined ? '' : column?.format ? column.format(value) : String(value);
   return column?.kind === 'money' ? text.replace(/[\s\u00A0\u202F]/g, '') : text;
 }, [columns]);
   return (
-    <div className="data-table" aria-label={label} onKeyDown={event => {
+    <div ref={gridContainerRef} className="data-table" aria-label={label} onKeyDown={event => {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return;
   if (activeCell.current === null) return;
   if (window.getSelection()?.toString()) return;
@@ -89,8 +117,22 @@ onCellClicked={event => {
             onFilteredRowsChange(filtered);
           }
         }}
+        onFilterChanged={event => setHasActiveFilters(Object.keys(event.api.getFilterModel()).length > 0)}
         overlayNoRowsTemplate="<span>Brak danych spełniających warunki</span>"
       />
+      {resetFilterCell && createPortal(
+  <button
+    type="button"
+    className="ag-filter-reset-button"
+    disabled={!hasActiveFilters}
+    title="Przywróć domyślne filtry"
+    aria-label="Przywróć domyślne filtry"
+    onClick={onResetFilters}
+  >
+    <img src="/icons/filter-reset.svg" alt="" />
+  </button>,
+  resetFilterCell
+)}
     </div>
   );
 }

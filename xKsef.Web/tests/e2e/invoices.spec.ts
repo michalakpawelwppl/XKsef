@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import type { Page } from '@playwright/test';
 
 const cell = (page: Page, row: string, column: string) => page.locator(`[role="row"][row-id="${row}"] [col-id="${column}"]`);
+const cellValue = (page: Page, row: string, column: string) => cell(page, row, column).locator('.copy-cell-text');
 const rowId = (number: number, direction = 'sales') => `demo-${direction}-${String(number).padStart(6, '0')}`;
 const count = (page: Page) => page.getByTestId('visible-count');
 
@@ -11,7 +12,7 @@ async function openInvoices(page: Page, size = '1000') {
   await page.goto('/prototype/invoices');
   await page.getByLabel('Liczba faktur').selectOption(size);
   await expect.poll(async () => (await count(page).innerText()).replace(/\s/g, '')).toBe(size);
-  await expect(cell(page, rowId(1), 'invoiceNumber')).toHaveText('FV/2026/000001');
+  await expect(cellValue(page, rowId(1), 'invoiceNumber')).toHaveText('FV/2026/000001');
 }
 
 const browserErrors = new WeakMap<Page, string[]>();
@@ -30,26 +31,26 @@ test.afterEach(async ({ page }) => {
 test('pokazuje polskie kolumny i właściwego kontrahenta w obu kierunkach', async ({ page }) => {
   await openInvoices(page);
   await expect(page.getByRole('grid', { name: 'Faktury sprzedaży' })).toBeVisible();
-  await expect(cell(page, rowId(1), 'counterpartyNip')).toHaveText('0123456789');
+  await expect(cellValue(page, rowId(1), 'counterpartyNip')).toHaveText('0123456789');
   await expect(page.getByRole('columnheader', { name: 'NIP nabywcy' })).toBeVisible();
   await page.getByRole('button', { name: 'Zakup', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Faktury zakupu' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'NIP sprzedawcy' })).toBeVisible();
-  await expect(cell(page, rowId(1, 'purchase'), 'counterpartyNip')).toHaveText('0987654321');
+  await expect(cellValue(page, rowId(1, 'purchase'), 'counterpartyNip')).toHaveText('0987654321');
   await expect(page.getByTestId('selected-count')).toHaveText('0');
 });
 
 test('formatuje kwoty i daty po polsku oraz rozróżnia null i zero', async ({ page }) => {
   await openInvoices(page);
-  await expect(cell(page, rowId(1), 'netAmount')).toHaveText(/1\s234,56/);
-  await expect(cell(page, rowId(2), 'netAmount')).toHaveText('-250,00');
-  await expect(cell(page, rowId(3), 'netAmount')).toHaveText('0,00');
-  await expect(cell(page, rowId(4), 'netAmount')).toHaveText('');
-  await expect(cell(page, rowId(4), 'vatAmount')).toHaveText('');
-  await expect(cell(page, rowId(4), 'invoicingDate')).toHaveText('');
-  await expect(cell(page, rowId(1), 'issueDate')).toHaveText('14.11.2026');
-  await expect(cell(page, rowId(1), 'invoicingDate')).toHaveText('14.11.2026 08:30');
-  await expect(cell(page, rowId(1), 'currency')).toHaveText('PLN');
+  await expect(cellValue(page, rowId(1), 'netAmount')).toHaveText(/1\s234,56/);
+  await expect(cellValue(page, rowId(2), 'netAmount')).toHaveText('-250,00');
+  await expect(cellValue(page, rowId(3), 'netAmount')).toHaveText('0,00');
+  await expect(cellValue(page, rowId(4), 'netAmount')).toHaveText('');
+  await expect(cellValue(page, rowId(4), 'vatAmount')).toHaveText('');
+  await expect(cellValue(page, rowId(4), 'invoicingDate')).toHaveText('');
+  await expect(cellValue(page, rowId(1), 'issueDate')).toHaveText('14.11.2026');
+  await expect(cellValue(page, rowId(1), 'invoicingDate')).toHaveText('14.11.2026 08:30');
+  await expect(cellValue(page, rowId(1), 'currency')).toHaveText('PLN');
   expect(await cell(page, rowId(1), 'netAmount').evaluate(element => getComputedStyle(element).textAlign)).toBe('right');
 });
 
@@ -57,7 +58,7 @@ test('sortuje kwoty numerycznie, uwzględniając wartości ujemne', async ({ pag
   await openInvoices(page);
   const header = page.locator('[role="columnheader"][col-id="netAmount"]');
   await header.click(); await expect(header).toHaveAttribute('aria-sort', 'ascending');
-  const values = await page.locator('[role="row"][row-id] [col-id="netAmount"]').allTextContents();
+  const values = await page.locator('[role="row"][row-id] [col-id="netAmount"] .copy-cell-text').allTextContents();
   const numbers = values.filter(Boolean).map(value => Number(value.replace(/\s/g, '').replace(',', '.')));
   expect(numbers.length).toBeGreaterThan(1); expect(numbers[0]).toBeLessThan(0); expect(numbers[0]).toBeLessThanOrEqual(numbers[1]);
   await header.click(); await expect(header).toHaveAttribute('aria-sort', 'descending');
@@ -77,14 +78,14 @@ test('filtr liczbowy przyjmuje polski przecinek dziesiętny', async ({ page }) =
   await openInvoices(page);
   await page.locator('.ag-floating-filter[col-id="netAmount"] input').fill('1234,56');
   await expect(count(page)).toHaveText('1');
-  await expect(cell(page, rowId(1), 'netAmount')).toHaveText(/1\s234,56/);
+  await expect(cellValue(page, rowId(1), 'netAmount')).toHaveText(/1\s234,56/);
 });
 
 test('filtr daty działa dla dni kalendarzowych', async ({ page }) => {
   await openInvoices(page);
   await page.locator('.ag-floating-filter[col-id="issueDate"] input[type="date"]').fill('2026-11-14');
   await expect(count(page)).toHaveText('33');
-  await expect(cell(page, rowId(1), 'issueDate')).toHaveText('14.11.2026');
+  await expect(cellValue(page, rowId(1), 'issueDate')).toHaveText('14.11.2026');
 });
 
 test('wybiera wiersze i zachowuje ich tożsamość po sortowaniu', async ({ page }) => {
@@ -128,13 +129,13 @@ test('wirtualizuje 100 000 rekordów i pozwala przejść do ostatniej faktury', 
   const rendered = await page.locator('[role="row"][row-id]').count();
   expect(rendered).toBeGreaterThan(0); expect(rendered).toBeLessThan(100);
   await page.locator('.ag-body-vertical-scroll-viewport').evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await expect(cell(page, rowId(100000), 'invoiceNumber')).toHaveText('FV/2026/100000');
+  await expect(cellValue(page, rowId(100000), 'invoiceNumber')).toHaveText('FV/2026/100000');
   expect(await page.locator('[role="row"][row-id]').count()).toBeLessThan(100);
   const loadAndScrollMs = Date.now() - start;
   const searchStart = Date.now();
   await page.getByRole('searchbox', { name: 'Szukaj w fakturach' }).fill('FV/2026/100000');
   await expect(count(page)).toHaveText('1', { timeout: 15000 });
-  await expect(cell(page, rowId(100000), 'invoiceNumber')).toHaveText('FV/2026/100000');
+  await expect(cellValue(page, rowId(100000), 'invoiceNumber')).toHaveText('FV/2026/100000');
   const output = testInfo.outputPath('virtualization.json');
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify({ totalRows: 100000, renderedRows: rendered, loadAndScrollMs, searchMs: Date.now() - searchStart }, null, 2));
@@ -160,7 +161,7 @@ test.describe('strefa czasowa inna niż polska', () => {
   test.use({ timezoneId: 'America/Los_Angeles' });
   test('data wystawienia nie przesuwa się, a data przyjęcia jest lokalna', async ({ page }) => {
     await openInvoices(page);
-    await expect(cell(page, rowId(1), 'issueDate')).toHaveText('14.11.2026');
-    await expect(cell(page, rowId(1), 'invoicingDate')).toHaveText('13.11.2026 23:30');
+    await expect(cellValue(page, rowId(1), 'issueDate')).toHaveText('14.11.2026');
+    await expect(cellValue(page, rowId(1), 'invoicingDate')).toHaveText('13.11.2026 23:30');
   });
 });

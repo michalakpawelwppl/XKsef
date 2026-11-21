@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { Page, Route } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 import { result, send } from '../fixtures/invoiceApi';
 
 const A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -36,7 +36,8 @@ async function mockApi(page: Page, options: { emptyTenants?: boolean; loginRequi
   });
   return { queries, paths };
 }
-const invoiceCell = (page: Page, text: string) => page.getByRole('gridcell', { name: text, exact: true });
+const invoiceCell = (page: Page, text: string) => page.locator('[role="gridcell"][col-id="invoiceNumber"]').filter({ has: page.getByText(text, { exact: true }) });
+const cellValue = (cell: Locator) => cell.locator('.copy-cell-text');
 
 function precisionInvoices() {
   const base = result('BASE').items[0];
@@ -59,7 +60,7 @@ test('untrusted invoice text remains inert in counterparty cells, invoice number
   await mockApi(page, { query: route => send(route, body) }); await page.goto('/app/invoices/sales');
   for (const [column, text] of [['invoiceNumber', number], ['counterpartyName', party]]) {
     const target = page.locator(`[role="row"][row-id] [role="gridcell"][col-id="${column}"]`);
-    await expect(target).toHaveText(text); await expect(target.locator('img,svg,script')).toHaveCount(0);
+    await expect(cellValue(target)).toHaveText(text); await expect(target.locator('img,svg,script')).toHaveCount(0);
     await target.hover(); const tooltip = page.getByRole('tooltip');
     await expect(tooltip).toHaveText(text); await expect(tooltip.locator('img,svg,script')).toHaveCount(0);
     await page.getByRole('heading', { name: 'Faktury sprzedaży', exact: true }).hover(); await expect(tooltip).toHaveCount(0);
@@ -74,12 +75,12 @@ for (const column of ['netAmount', 'vatAmount', 'grossAmount'] as const) {
     await expect(page.getByTestId('summary-count')).toHaveText('7');
     const cell = (label: string) => page.getByRole('row').filter({ has: invoiceCell(page, `PREC-${label}`) }).locator(`[col-id="${column}"]`);
     const normalize = (value: string) => value.replace(/\s/g, '');
-    await expect.poll(async () => normalize(await cell('HI').innerText())).toBe('9999999999999999,99');
-    await expect.poll(async () => normalize(await cell('LO').innerText())).toBe('9999999999999999,98');
-    await expect(cell('ZERO')).toHaveText('0,00'); await expect(cell('SMALL')).toHaveText('123,45');
-    await expect(cell('MISSING')).toHaveText(column === 'grossAmount' ? '0,00' : '');
+    await expect.poll(async () => normalize(await cellValue(cell('HI')).innerText())).toBe('9999999999999999,99');
+    await expect.poll(async () => normalize(await cellValue(cell('LO')).innerText())).toBe('9999999999999999,98');
+    await expect(cellValue(cell('ZERO'))).toHaveText('0,00'); await expect(cellValue(cell('SMALL'))).toHaveText('123,45');
+    await expect(cellValue(cell('MISSING'))).toHaveText(column === 'grossAmount' ? '0,00' : '');
     const header = page.locator(`[role="columnheader"][col-id="${column}"]`);
-    const names = page.locator('[role="row"][row-id] [col-id="invoiceNumber"]');
+    const names = page.locator('[role="row"][row-id] [col-id="invoiceNumber"] .copy-cell-text');
     await header.click(); await expect(header).toHaveAttribute('aria-sort', 'ascending');
     await expect(names).toHaveText((column === 'grossAmount'
       ? ['NEG-HI', 'NEG-LO', 'ZERO', 'MISSING', 'SMALL', 'LO', 'HI']
@@ -90,9 +91,9 @@ for (const column of ['netAmount', 'vatAmount', 'grossAmount'] as const) {
       : ['MISSING', 'HI', 'LO', 'SMALL', 'ZERO', 'NEG-LO', 'NEG-HI']).map(label => `PREC-${label}`));
     for (const label of ['HI', 'NEG-HI', 'ZERO']) {
       await cell(label).click();
-      const displayed = await cell(label).innerText();
+      const displayed = await cellValue(cell(label)).innerText();
       await page.evaluate(() => navigator.clipboard.writeText('sentinel'));
-      await cell(label).evaluate(element => {
+      await cellValue(cell(label)).evaluate(element => {
         const range = document.createRange(); range.selectNodeContents(element);
         const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
       });
@@ -124,7 +125,7 @@ test('exact amount filter preserves numeric inequalities, ranges and missing-val
   };
   const check = async (labels: string[], total: string) => {
     await expect(page.getByTestId('summary-count')).toHaveText(String(labels.length));
-    await expect(page.locator('[role="row"][row-id] [col-id="invoiceNumber"]')).toHaveText(labels.map(label => `PREC-${label}`));
+    await expect(page.locator('[role="row"][row-id] [col-id="invoiceNumber"] .copy-cell-text')).toHaveText(labels.map(label => `PREC-${label}`));
     await expect.poll(async () => (await page.getByTestId('summary-gross').innerText()).replace(/\s/g, '')).toBe(total);
   };
   for (const [operator, labels] of [
@@ -135,7 +136,7 @@ test('exact amount filter preserves numeric inequalities, ranges and missing-val
   ] as const) {
     await choose(operator); await filter.locator('input').first().fill('9999999999999999,98');
     await expect(page.getByTestId('summary-count')).toHaveText(String(labels.length));
-    await expect(page.locator('[role="row"][row-id] [col-id="invoiceNumber"]')).toHaveText(labels.map(label => `PREC-${label}`));
+    await expect(page.locator('[role="row"][row-id] [col-id="invoiceNumber"] .copy-cell-text')).toHaveText(labels.map(label => `PREC-${label}`));
   }
   await choose('Pomiędzy');
   await filter.locator('input').first().fill('9999999999999999,97');
@@ -324,9 +325,9 @@ test('preserves grid search, sorting, numeric filters, selection and reset with 
   await page.getByRole('button', { name: 'Resetuj widok' }).click(); await expect(page.getByTestId('selected-count')).toHaveText('0');
   await expect(page.getByTestId('visible-count')).toHaveText('3');
   await page.getByRole('columnheader', { name: 'Numer faktury', exact: true }).click();
-  await expect(page.locator('[role="row"][row-index="0"] [col-id="invoiceNumber"]')).toHaveText('A-Sales-0');
+  await expect(page.locator('[role="row"][row-index="0"] [col-id="invoiceNumber"] .copy-cell-text')).toHaveText('A-Sales-0');
   await page.getByRole('columnheader', { name: 'Numer faktury', exact: true }).click();
-  await expect(page.locator('[role="row"][row-index="0"] [col-id="invoiceNumber"]')).toHaveText('A-Sales-2');
+  await expect(page.locator('[role="row"][row-index="0"] [col-id="invoiceNumber"] .copy-cell-text')).toHaveText('A-Sales-2');
   const filter = page.locator('.ag-floating-filter[col-id="grossAmount"] input'); await filter.fill('123');
   await expect(page.getByTestId('visible-count')).toHaveText('1'); await expect(invoiceCell(page, 'A-Sales-0')).toBeVisible();
 });
