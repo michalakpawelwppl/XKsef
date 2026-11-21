@@ -22,7 +22,7 @@ export function connectBrowserSession(store: BrowserSessionStore, visibility: Se
     // Repeated visible events share one check; an actual return or a new remote signal supersedes it.
     // Do not interrupt a local authentication mutation on visibility alone.
     if (!remote && (verification ? !returned : store.getSnapshot().busy)) return;
-    const pending = store.restore(!remote);
+    const pending = remote ? store.restore(false) : store.verify();
     verification = pending;
     void pending.finally(() => { if (verification === pending) verification = null; });
   }
@@ -39,5 +39,5 @@ export function connectBrowserSession(store: BrowserSessionStore, visibility: Se
     active = false; unsubscribe(); visibility.removeEventListener('visibilitychange', visible);
     if (channel) { channel.onmessage = null; channel.close(); }
   };
-  return { disconnect, restore: () => verify(false) };
+  return { disconnect, restore: () => active ? store.restore() : Promise.resolve() };
 }

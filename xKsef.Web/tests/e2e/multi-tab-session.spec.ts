@@ -108,8 +108,9 @@ test('returning to a tab after server revocation hides old data and verifies ses
   await foreground(page); await expect(invoice(page, 'OWNER-A-0')).toBeVisible();
   sessionApi.revokeAll(); const verification = sessionApi.holdNextIdentity(other);
   await returnToTab(other); await verification.arrived;
-  await expect(other.getByRole('grid')).toHaveCount(0); await phase(other, 'invalidated');
+  await expect(other.getByRole('grid')).toHaveCount(1);
   verification.release(); await expect(other).toHaveURL(/\/login$/);
+  await phase(other, 'invalidated');
   // The identity change detected on visibility also notifies the other tab, without an echo loop.
   await expect(page).toHaveURL(/\/login$/); await expect(page.getByRole('grid')).toHaveCount(0);
   for (const tab of [page, other]) {
@@ -136,17 +137,17 @@ for (const status of [200, 401, 403, 503]) {
 }
 
 for (const outcome of [503, 'network'] as const) {
-  test(`visibility verification error ${outcome} hides cached data and permits explicit retry without declaring logout`, async ({ page, sessionApi }) => {
+  test(`visibility verification error ${outcome} preserves mounted context and permits explicit retry without declaring logout`, async ({ page, sessionApi }) => {
     const other = await openSharedTabs(page, sessionApi); await observe(other);
     await foreground(page); await expect(invoice(page, 'OWNER-A-0')).toBeVisible();
     const verification = sessionApi.holdNextIdentity(other);
-    await returnToTab(other); await verification.arrived; await expect(other.getByRole('grid')).toHaveCount(0); await phase(other, 'invalidated');
+    await returnToTab(other); await verification.arrived; await expect(other.getByRole('grid')).toHaveCount(1); await phase(other, 'checking');
     verification.release(outcome);
-    await expect(other.getByRole('heading', { name: 'Nie udało się wczytać sesji' })).toBeVisible();
-    await expect(other.getByRole('grid')).toHaveCount(0); await expect(other.getByRole('heading', { name: 'Zaloguj się', exact: true })).toHaveCount(0);
+    await expect(other.getByRole('dialog', { name: 'Weryfikacja sesji' })).toBeVisible();
+    await expect(other.locator('[role="grid"]')).toHaveCount(1); await expect(other.getByRole('heading', { name: 'Zaloguj się', exact: true })).toHaveCount(0);
     expect((await probe(other, '/api/browser-auth/me')).status).toBe(200);
-    expect((await observations(other)).filter(item => item.phase === 'invalidated').every(item => !item.text.includes('OWNER-A') && !item.text.includes('Sesja wygasła'))).toBe(true);
-    await phase(other, 'retry'); await other.getByRole('button', { name: 'Spróbuj ponownie', exact: true }).click();
+    expect((await observations(other)).every(item => !item.text.includes('Sesja wygasła'))).toBe(true);
+    await phase(other, 'retry'); await other.getByRole('button', { name: 'Ponów weryfikację sesji', exact: true }).click();
     await expect(other.locator('.session-user')).toHaveText('user-A'); await expect(invoice(other, 'OWNER-A-0')).toBeVisible();
     await assertSignals(page, other, 1);
   });

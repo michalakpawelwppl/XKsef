@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
 import { useSession } from '../platform/session/SessionProvider';
 const futureModules = ['Banki i rozrachunki', 'Księgowość', 'Podatki', 'Środki trwałe', 'Kadry i płace', 'Administracja'];
@@ -58,7 +58,23 @@ const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
       <button className="secondary-button" onClick={() => { void store.refreshTenants(); }}>Odśwież dostęp</button></section>
       {state.notice && <p className="workspace-message notice" role="status">{state.notice}</p>}
       {state.error && <p className="workspace-message error-message" role="alert">{state.error}</p>}
+      {state.verificationError && <VerificationError error={state.verificationError} onRetry={() => { void store.verify(); }} onLogout={() => { void store.logout(); }} />}
       <div key={`${state.sessionGeneration}:${state.tenantGeneration}`}><Outlet /></div>
     </div>
   </div>;
+}
+
+function VerificationError({ error, onRetry, onLogout }: { error: string; onRetry: () => void; onLogout: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    dialog?.showModal();
+    return () => { dialog?.close(); };
+  }, []);
+  // Native top-layer dialog remains reachable above existing form portals without changing their CSS or state.
+  return <dialog ref={ref} aria-label="Weryfikacja sesji" onCancel={event => event.preventDefault()}>
+    <p role="alert">Nie udało się zweryfikować sesji. {error}</p>
+    <button className="secondary-button" onClick={onRetry}>Ponów weryfikację sesji</button>
+    <button className="secondary-button" onClick={onLogout}>Wyloguj</button>
+  </dialog>;
 }

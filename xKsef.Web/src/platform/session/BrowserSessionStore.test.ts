@@ -65,13 +65,13 @@ describe('cross-tab session verification', () => {
       expect(store.getSnapshot().status).toBe('anonymous'); expect(sync.channel.postMessage).toHaveBeenCalledExactlyOnceWith(sessionChanged);
     } finally { sync.disconnect(); }
   });
-  it('keeps data hidden until current tenant permissions are confirmed even when the user identity is unchanged', async () => {
+  it('keeps the current context while checking permissions and invalidates only after confirmed loss of access', async () => {
     const { store, controls } = fixture(); await store.restore(); await store.login('user', 'password'); const sync = synchronization(store);
     const entered = deferred<void>(); const permissions = deferred<Response>();
     controls.tenantsOverride = () => { entered.resolve(); return permissions.promise; };
     try {
       sync.visibility.show(); await entered.promise;
-      expect(store.getSnapshot()).toMatchObject({ status: 'loading', user: null, tenants: [], activeTenantId: null });
+      expect(store.getSnapshot()).toMatchObject({ status: 'authenticated', user: { userId: 'user-1' }, activeTenantId: 'A', verification: 'checking' });
       permissions.resolve(json([]));
       await vi.waitFor(() => expect(store.getSnapshot()).toMatchObject({ status: 'authenticated', user: { userId: 'user-1' }, tenants: [], activeTenantId: null }));
       expect(sync.channel.postMessage).not.toHaveBeenCalled();
@@ -102,17 +102,17 @@ describe('cross-tab session verification', () => {
         expect(store.getSnapshot()).toBe(current); expect(snapshots).toEqual([]); expect(sync.channel.postMessage).not.toHaveBeenCalled();
       } finally { unsubscribe(); sync.disconnect(); }
     });
-  it.each(['http', 'network'] as const)('hides old data during visibility verification and offers recovery after a transient %s failure', async mode => {
+  it.each(['http', 'network'] as const)('retains the verified context and offers recovery after a transient %s verification failure', async mode => {
     const { store, controls, calls } = fixture(); await store.restore(); await store.login('user', 'password'); const sync = synchronization(store);
     const gate = deferred<Response>(); controls.meOverride = async () => { await gate.promise; if (mode === 'network') throw new Error('Private detail'); return json({}, 503); };
     try {
       const count = calls.filter(call => call.path.endsWith('/me')).length;
       sync.visibility.show(); sync.visibility.show();
       expect(calls.filter(call => call.path.endsWith('/me'))).toHaveLength(count + 1);
-      expect(store.getSnapshot()).toMatchObject({ status: 'loading', user: null, tenants: [], activeTenantId: null });
-      gate.resolve(json({})); await vi.waitFor(() => expect(store.getSnapshot()).toMatchObject({ status: 'error', recovery: 'restore', busy: false, user: null, tenants: [] }));
+      expect(store.getSnapshot()).toMatchObject({ status: 'authenticated', activeTenantId: 'A', verification: 'checking' });
+      gate.resolve(json({})); await vi.waitFor(() => expect(store.getSnapshot()).toMatchObject({ status: 'authenticated', verification: 'error', busy: false, user: { userId: 'user-1' } }));
       expect(store.getSnapshot().notice).toBeNull(); expect(sync.channel.postMessage).not.toHaveBeenCalled();
-      controls.meOverride = null; await store.restore();
+      controls.meOverride = null; await store.verify();
       expect(store.getSnapshot()).toMatchObject({ status: 'authenticated', error: null, user: { userId: 'user-1' } });
     } finally { sync.disconnect(); }
   });
@@ -121,7 +121,7 @@ describe('cross-tab session verification', () => {
     controls.meOverride = async () => json({ userId: 'user-B', login: 'B' }, status); controls.tenantsOverride = async () => json([tenants[1]]);
     try {
       sync.visibility.show();
-      await vi.waitFor(() => expect(store.getSnapshot()).toMatchObject({ status: status === 401 ? 'anonymous' : 'authenticated', busy: false }));
+      await vi.waitFor(() => expect(store.getSnapshot()).toMatchObject({ status: status === 401 ? 'anonymous' : 'authenticated', busy: false, user: status === 401 ? null : { userId: 'user-B' } }));
       expect(store.getSnapshot().user?.userId ?? null).toBe(status === 401 ? null : 'user-B');
       expect(sync.channel.postMessage).toHaveBeenCalledExactlyOnceWith(sessionChanged);
       sync.visibility.show(); await vi.waitFor(() => expect(store.getSnapshot().busy).toBe(false));
@@ -189,6 +189,114 @@ describe('cross-tab session verification', () => {
       controls.meOverride = async () => json({}, 401); visibility.show();
       await vi.waitFor(() => expect(store.getSnapshot()).toMatchObject({ status: 'anonymous', user: null, tenants: [] }));
     } finally { stop(); }
+  });
+});
+
+describe('non-destructive verification', () => {
+  it.each([200, 401])('ignores an old visibility HTTP %s after explicit login established another identity', async status => {
+    const { store, controls } = fixture(); await store.login('user', 'password');
+    const reply = deferred<Response>(); controls.meOverride = () => reply.promise;
+    const check = store.verify();
+    controls.meOverride = async () => json({ userId: 'user-B', login: 'B' });
+    await store.login('B', 'password'); const current = store.getSnapshot();
+    reply.resolve(json({ userId: 'user-1', login: 'old' }, status)); await check;
+    expect(store.getSnapshot()).toBe(current); expect(current.user?.userId).toBe('user-B');
+  });
+  it.each([401, 403, 503])('handles current permission verification HTTP %s without granting unconfirmed access', async status => {
+    const { store, controls, api } = fixture(); await store.login('user', 'password');
+    controls.tenantsStatus = status; await store.verify();
+    expect(store.getSnapshot()).toMatchObject(status === 401
+      ? { status: 'anonymous', user: null, activeTenantId: null }
+      : { status: 'authenticated', verification: 'error', activeTenantId: 'A' });
+    if (status !== 401) await expect(api.request('/api/business', { scope: 'tenant' })).rejects.toMatchObject({ status: 0 });
+  });
+  it('aborts an older tenant-list read before its stale 401 can expire a verified session', async () => {
+    const { store, controls } = fixture(); await store.login('user', 'password');
+    const reply = deferred<Response>(); controls.tenantsOverride = () => reply.promise;
+    const older = store.refreshTenants(); controls.tenantsOverride = null;
+    await store.verify(); const current = store.getSnapshot();
+    reply.resolve(json({}, 401)); await older;
+    expect(store.getSnapshot()).toBe(current); expect(current.status).toBe('authenticated');
+  });
+  it('keeps the second tenant, generations, request signals and CSRF when identity and access are unchanged', async () => {
+    const { store, context, controls, calls, api } = fixture(); await store.login('user', 'password'); store.selectTenant('B');
+    const before = context.capture('tenant'); const session = context.capture('session'); const csrfReads = calls.filter(call => call.path.endsWith('/csrf')).length;
+    controls.tenantsOverride = async () => json([{ ...tenants[1], name: 'Renamed B' }, { ...tenants[0], role: 'User' }]);
+    const sync = synchronization(store);
+    try {
+      sync.visibility.show(); await vi.waitFor(() => expect(store.getSnapshot().verification).toBe('idle'));
+      expect(store.getSnapshot()).toMatchObject({ activeTenantId: 'B', sessionGeneration: before.session, tenantGeneration: before.tenantGeneration });
+      expect(context.isCurrent(before)).toBe(true); expect(session.signal.aborted).toBe(false);
+      expect(sync.channel.postMessage).not.toHaveBeenCalled();
+      expect(calls.filter(call => call.path.endsWith('/csrf'))).toHaveLength(csrfReads);
+      await api.request('/api/business', { scope: 'tenant', method: 'POST' });
+      expect(new Headers(calls.at(-1)!.init.headers).get('X-Tenant-Id')).toBe('B');
+    } finally { sync.disconnect(); }
+  });
+  it.each(['verify', 'refreshTenants'] as const)('invalidates only tenant requests when active access changes via %s', async method => {
+    const { store, context, controls } = fixture(); await store.login('user', 'password'); store.selectTenant('B');
+    const tenant = context.capture('tenant'); const session = context.capture('session');
+    controls.tenantsOverride = async () => json([tenants[0], { ...tenants[1], role: 'Admin' }]);
+    await store[method]();
+    expect(tenant.signal.aborted).toBe(true); expect(context.isCurrent(session)).toBe(true);
+    expect(store.getSnapshot()).toMatchObject({ activeTenantId: 'B', sessionGeneration: session.session, tenantGeneration: tenant.tenantGeneration + 1 });
+  });
+  it('does not select a first tenant after access was removed and later granted again', async () => {
+    const { store, controls } = fixture(); await store.login('user', 'password');
+    controls.tenantsOverride = async () => json([]); await store.verify();
+    expect(store.getSnapshot().activeTenantId).toBeNull();
+    controls.tenantsOverride = null; await store.verify();
+    expect(store.getSnapshot()).toMatchObject({ activeTenantId: null, tenants });
+  });
+  it('reconciles the current selection if it changed while verification was pending', async () => {
+    const { store, controls, context } = fixture(); await store.login('user', 'password');
+    const gate = deferred<Response>(); controls.meOverride = () => gate.promise;
+    const verification = store.verify(); store.selectTenant('B'); const selected = context.capture('tenant');
+    gate.resolve(json({ userId: 'user-1', login: 'user' })); await verification;
+    expect(store.getSnapshot().activeTenantId).toBe('B'); expect(context.isCurrent(selected)).toBe(true);
+  });
+  it('blocks new JSON and blob operations centrally while preserving an admitted mutation through a network failure', async () => {
+    const { store, controls, api, calls, context } = fixture(); await store.login('user', 'password');
+    const entered = deferred<void>(); const reply = deferred<Response>();
+    controls.businessOverride = () => { entered.resolve(); return reply.promise; };
+    const pending = api.request('/api/business', { scope: 'tenant', method: 'POST' }); await entered.promise;
+    const captured = context.capture('tenant'); const businessCalls = () => calls.filter(call => call.path === '/api/business').length;
+    const identity = deferred<Response>(); controls.meOverride = () => identity.promise;
+    const verification = store.verify();
+    await expect(api.request('/api/business', { scope: 'tenant', method: 'POST' })).rejects.toMatchObject({ status: 0 });
+    await expect(api.requestBlob('/api/file', { scope: 'tenant' })).rejects.toMatchObject({ status: 0 });
+    identity.resolve(json({}, 503)); await verification;
+    expect(store.getSnapshot()).toMatchObject({ status: 'authenticated', verification: 'error', activeTenantId: 'A' });
+    expect(context.isCurrent(captured)).toBe(true);
+    await expect(api.request('/api/business', { scope: 'tenant' })).rejects.toMatchObject({ status: 0 });
+    reply.resolve(json({ saved: true })); await expect(pending).resolves.toEqual({ saved: true }); expect(businessCalls()).toBe(1);
+    controls.meOverride = null; controls.businessOverride = null; await store.verify();
+    await api.request('/api/business', { scope: 'tenant' }); expect(businessCalls()).toBe(2);
+  });
+  it.each([401, 403, 503, 200])('ignores superseded verification HTTP %s even during decoding without expiring the valid session', async status => {
+    const { store, controls, context } = fixture(); await store.login('user', 'password'); store.selectTenant('B');
+    const body = deferred<unknown>(); const entered = deferred<void>(); const oldResponse = json({}, status);
+    oldResponse.json = () => { entered.resolve(); return body.promise; };
+    controls.meOverride = async () => oldResponse;
+    const older = store.verify(); await entered.promise;
+    controls.meOverride = null; await store.verify(); const current = store.getSnapshot(); const snapshot = context.capture('tenant');
+    body.resolve(status === 200 ? { userId: 'stale-user', login: 'stale' } : {}); await older;
+    expect(store.getSnapshot()).toBe(current); expect(context.isCurrent(snapshot)).toBe(true);
+  });
+  it.each(['logout', 'expire'] as const)('cannot restore identity after %s occurred while verification was pending', async action => {
+    const { store, controls } = fixture(); await store.login('user', 'password');
+    const reply = deferred<Response>(); controls.meOverride = () => reply.promise;
+    const check = store.verify(); await store[action]();
+    reply.resolve(json({ userId: 'user-1', login: 'stale' })); await check;
+    expect(store.getSnapshot()).toMatchObject({ status: 'anonymous', user: null, activeTenantId: null });
+  });
+  it('refreshes identity rather than granting access from a newer tenant refresh while verification is incomplete', async () => {
+    const { store, controls, calls } = fixture(); await store.login('user', 'password');
+    const older = deferred<Response>(); controls.meOverride = () => older.promise;
+    const check = store.verify(); const oldSignal = calls.at(-1)!.init.signal!;
+    controls.meOverride = null; await store.refreshTenants(); expect(oldSignal.aborted).toBe(true);
+    const current = store.getSnapshot(); older.resolve(json({}, 401)); await check;
+    expect(store.getSnapshot()).toBe(current); expect(current.verification).toBe('idle');
   });
 });
 

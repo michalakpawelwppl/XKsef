@@ -12,11 +12,18 @@ export interface SharedSessionApi {
   revokeAll(): void;
   holdNextQuery(recheckAuthentication: boolean, status?: number): { arrived: Promise<void>; release(): void };
   holdNextIdentity(page: Page): { arrived: Promise<void>; release(result?: 'normal' | 'network' | 503): void };
+  setTenants(owner: 'user-A' | 'user-B', tenants: readonly { id: string; name: string; role: 'User' | 'Admin' }[]): void;
+  holdNextContractorSave(): { arrived: Promise<void>; release(): void };
 }
 
 async function mockSharedSession(context: BrowserContext): Promise<SharedSessionApi> {
   const sessions = new Map<string, string>(); let sequence = 0;
   const requests: SessionRequest[] = [];
+  const access = new Map<string, readonly { id: string; name: string; role: 'User' | 'Admin' }[]>([
+    ['user-A', [{ id: tenantA, name: 'Firma user-A', role: 'User' }]],
+    ['user-B', [{ id: tenantB, name: 'Firma user-B', role: 'User' }]],
+  ]);
+  let nextSave: { arrived(): void; released: Promise<void> } | null = null;
   let nextQuery: { recheck: boolean; status: number; arrived(): void; released: Promise<void> } | null = null;
   const identities = new Map<Page, { arrived(): void; released: Promise<'normal' | 'network' | 503> }>();
   await context.addInitScript(() => {
@@ -48,6 +55,18 @@ async function mockSharedSession(context: BrowserContext): Promise<SharedSession
       if (key) sessions.delete(key);
       return reply({}, owner ? 204 : 401, { 'Set-Cookie': `${cookieName}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax` });
     }
+    if (path === '/api/contractors') {
+      if (!owner) return reply({}, 401);
+      if (!access.get(owner)?.some(tenant => tenant.id === headers['x-tenant-id'])) return reply({}, 403);
+      if (request.method() === 'POST') {
+        expect(headers['x-csrf-token']).toBe('fixture-token');
+        const pending = nextSave; nextSave = null;
+        if (pending) { pending.arrived(); await pending.released; }
+        return reply({ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc' }, 201);
+      }
+      expect(request.method()).toBe('GET');
+      return reply([]);
+    }
     expect(request.method()).toBe('GET');
     if (path === '/api/browser-auth/me') {
       const pending = identities.get(request.frame().page());
@@ -59,10 +78,9 @@ async function mockSharedSession(context: BrowserContext): Promise<SharedSession
       return owner ? reply({ userId: owner, login: owner }) : reply({}, 401);
     }
     if (!owner) return reply({}, 401);
-    const tenant = owner === 'user-A' ? tenantA : tenantB;
-    if (path === '/api/tenants') return reply([{ id: tenant, name: `Firma ${owner}`, role: 'User' }]);
+    if (path === '/api/tenants') return reply(access.get(owner) ?? []);
     expect(path).toBe('/api/invoices/query');
-    if (headers['x-tenant-id'] !== tenant) return reply({}, 403);
+    if (!access.get(owner)?.some(tenant => tenant.id === headers['x-tenant-id'])) return reply({}, 403);
     const pending = nextQuery; nextQuery = null;
     if (pending) {
       // Capture authorization before holding the reply, matching a request already admitted by API middleware.
@@ -75,6 +93,15 @@ async function mockSharedSession(context: BrowserContext): Promise<SharedSession
   });
   return {
     requests,
+    setTenants(owner, tenants) { access.set(owner, tenants); },
+    holdNextContractorSave() {
+      expect(nextSave).toBeNull();
+      let arrived!: () => void; let release!: () => void;
+      const admitted = new Promise<void>(resolve => { arrived = resolve; });
+      const released = new Promise<void>(resolve => { release = resolve; });
+      nextSave = { arrived, released };
+      return { arrived: admitted, release };
+    },
     revokeAll() { sessions.clear(); },
     holdNextQuery(recheckAuthentication, status = 200) {
       expect(nextQuery).toBeNull();

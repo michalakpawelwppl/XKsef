@@ -8,6 +8,7 @@ interface RequestOptions { readonly scope: RequestScope; readonly method?: 'GET'
 export class ApiClient {
   onUnauthorized?: () => void;
   onTenantForbidden?: () => void;
+  beforeBusinessRequest?: () => void;
   #token: string | null = null;
   #csrfGeneration = 0;
   #csrfAbort = new AbortController();
@@ -39,6 +40,7 @@ export class ApiClient {
     finally { if (this.#pendingToken === promise) this.#pendingToken = null; }
   }
   async request<T>(path: string | ((snapshot: RequestSnapshot) => string), options: RequestOptions): Promise<T> {
+    if (options.scope !== 'anonymous' && !(path === '/api/tenants' && (!options.method || options.method === 'GET'))) this.beforeBusinessRequest?.();
     const snapshot = this.context.capture(options.scope);
     this.#assertCurrent(snapshot, options.signal);
     const method = options.method ?? 'GET';
@@ -54,6 +56,7 @@ export class ApiClient {
     return await this.#decode(response, snapshot, options.signal) as T;
   }
 async requestBlob(path: string, options: RequestOptions): Promise<Blob> {
+  if (options.scope !== 'anonymous') this.beforeBusinessRequest?.();
   const snapshot = this.context.capture(options.scope);
   this.#assertCurrent(snapshot, options.signal);
 
