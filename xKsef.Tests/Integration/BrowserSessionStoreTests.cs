@@ -206,17 +206,13 @@ public sealed class BrowserSessionStoreTests
         public static async Task<Fixture> CreateAsync(IDataProtectionProvider? protection = null)
         {
             var f = new Fixture { Protection = protection ?? new EphemeralDataProtectionProvider() };
-            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json").Build();
+            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json").UseIsolatedSqlServer().Build();
             f.Connection = configuration.GetConnectionString("DefaultConnection")!;
-            var builder = new SqlConnectionStringBuilder(f.Connection);
-            if (!string.Equals(builder.DataSource, @"(LocalDb)\MSSQLLocalDB", StringComparison.OrdinalIgnoreCase) || builder.InitialCatalog != "xKsef") throw new InvalidOperationException("Only LocalDB/xKsef tests are permitted.");
+            await SqlServerTestDatabase.VerifyAsync(f.Connection);
             f.Provider = f.NewProvider(f.Protection);
             try
             {
                 using var scope = f.Provider.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                await db.Database.OpenConnectionAsync(); using var command = db.Database.GetDbConnection().CreateCommand();
-                command.CommandText = "SELECT CASE WHEN DB_NAME()=N'xKsef' AND CONVERT(int,SERVERPROPERTY('IsLocalDB'))=1 THEN 1 ELSE 0 END";
-                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
                 foreach (string id in new[] { f.User, f.Other }) db.Users.Add(new ApplicationUser { Id = id, UserName = "browser-session-" + id, NormalizedUserName = ("browser-session-" + id).ToUpperInvariant(), SecurityStamp = Guid.NewGuid().ToString() });
                 await db.SaveChangesAsync(); return f;
             }

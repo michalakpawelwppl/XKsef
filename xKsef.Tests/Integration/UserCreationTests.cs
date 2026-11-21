@@ -215,7 +215,7 @@ public sealed class UserCreationTests
             var api = new UserApi(operatorId);
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(AppContext.BaseDirectory)
-                .AddJsonFile("appsettings.Test.json", optional: false)
+                .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ApplicationOperator:UserId"] = environmentPrefix is null ? api.OperatorId : "overridden",

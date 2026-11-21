@@ -60,7 +60,7 @@ public sealed class InvoiceQueryTests
 
     [Theory]
     [InlineData("2026-03-08")]
-    [InlineData("2026-11-01")]
+    [InlineData("2025-11-02")]
     public void NonexistentOrAmbiguousMidnightIsRejected(string date)
     {
         var day = DateOnly.Parse(date, CultureInfo.InvariantCulture);

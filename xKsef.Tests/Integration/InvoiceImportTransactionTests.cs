@@ -19,7 +19,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -86,7 +86,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -161,7 +161,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -251,7 +251,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -319,7 +319,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -387,7 +387,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -453,7 +453,7 @@ public sealed class InvoiceImportTransactionTests
         // Arrange
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
 
         var connectionString =
@@ -593,7 +593,7 @@ public sealed class InvoiceImportTransactionTests
     {
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.Test.json", optional: false)
+            .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
             .Build();
         return new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlServer(configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Brak connection stringa DefaultConnection."))

@@ -410,7 +410,7 @@ public sealed class TenantCreationTests
         {
             var api = new TenantApi();
             api.Configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory)
-                .AddJsonFile("appsettings.Test.json", optional: false)
+                .AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ApplicationOperator:UserId"] = api.OperatorId,

@@ -245,10 +245,9 @@ public sealed class TenantUsersTests
         public static async Task<Fixture> CreateAsync(bool twoAdmins = false)
         {
             var api = new Fixture();
-            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json")
+            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json").UseIsolatedSqlServer()
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:Issuer"] = "members-tests", ["Jwt:Audience"] = "members-tests", ["Jwt:SigningKey"] = Convert.ToBase64String(api._key), ["Jwt:ExpirationMinutes"] = "5" }).Build();
-            var connection = new SqlConnectionStringBuilder(configuration.GetConnectionString("DefaultConnection"));
-            if (connection.DataSource != @"(LocalDb)\MSSQLLocalDB" || connection.InitialCatalog != "xKsef") throw new InvalidOperationException("Only local xKsef integration tests are permitted.");
+            await SqlServerTestDatabase.VerifyAsync(configuration.GetConnectionString("DefaultConnection")!);
             api.Host = await new HostBuilder().ConfigureWebHost(web => web.UseTestServer().ConfigureLogging(log => log.ClearProviders()).ConfigureServices(services =>
             {
                 services.AddSingleton<IConfiguration>(configuration); services.AddDatabaseInfrastructure(configuration);
@@ -263,8 +262,6 @@ public sealed class TenantUsersTests
             try
             {
                 using var scope = api.Host.Services.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                await db.Database.OpenConnectionAsync();
-                using (var guard = db.Database.GetDbConnection().CreateCommand()) { guard.CommandText = "SELECT CASE WHEN DB_NAME()=N'xKsef' AND CONVERT(int,SERVERPROPERTY('IsLocalDB'))=1 THEN 1 ELSE 0 END"; Assert.Equal(1, Convert.ToInt32(await guard.ExecuteScalarAsync())); }
                 var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
                 foreach (var (id, name) in new[] { (api.A, api.Prefix + "-a"), (api.B, api.LoginB), (api.C, api.Prefix + "-c"), (api.D, api.LoginD) }) Assert.True((await users.CreateAsync(new ApplicationUser { Id = id, UserName = name, Email = name + "@example.com" })).Succeeded);
                 db.TaxEntities.Add(new TaxEntity { Id = api.TaxId, Nip = Random.Shared.NextInt64(1_000_000_000L, 10_000_000_000L).ToString(System.Globalization.CultureInfo.InvariantCulture), Name = api.Prefix });

@@ -1,8 +1,8 @@
 namespace xKsef.Tests.Integration;
 
-// Fixtures share a physical LocalDB. Parallel requests inside individual tests remain enabled.
+// The collection owns a fresh database per test run, never the application database.
 [CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class LocalDbIntegrationCollection
+public sealed class LocalDbIntegrationCollection : ICollectionFixture<SqlServerTestDatabase>
 {
     public const string Name = "LocalDB integration tests";
 }

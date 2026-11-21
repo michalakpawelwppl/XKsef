@@ -314,7 +314,7 @@ public sealed class InvoiceReadTests
     [InlineData("to=2026-11-14&direction=Sales")]
     [InlineData("from=2026-11-12&to=2026-11-14")]
     [InlineData("from=2026-03-08&to=2026-03-08&direction=Sales&dateKind=InvoicingDate&timeZoneId=America/Havana")]
-    [InlineData("from=2026-11-01&to=2026-11-01&direction=Sales&dateKind=InvoicingDate&timeZoneId=America/Havana")]
+    [InlineData("from=2025-11-02&to=2025-11-02&direction=Sales&dateKind=InvoicingDate&timeZoneId=America/Havana")]
     [InlineData("from=9999-12-31&to=9999-12-31&direction=Sales&dateKind=InvoicingDate&timeZoneId=UTC")]
     public async Task QueryRejectsInvalidFiltersBeforeReadingInvoices(string query)
     {
@@ -368,7 +368,7 @@ public sealed class InvoiceReadTests
         public static async Task<InvoiceApi> CreateAsync()
         {
             var api = new InvoiceApi();
-            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json", optional: false).Build();
+            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer().Build();
             api._host = await new HostBuilder().ConfigureWebHost(web => web.UseTestServer()
                 .ConfigureLogging(logging => logging.ClearProviders())
                 .ConfigureServices(services =>

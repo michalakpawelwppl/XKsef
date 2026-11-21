@@ -136,26 +136,14 @@ public sealed class RegistrationSqlServerTests
         public static async Task<RegistrationApi> CreateAsync()
         {
             var api = new RegistrationApi();
-            string expectedServer = Environment.GetEnvironmentVariable("XKSEF_SQL_TEST_EXPECTED_SERVER")
-                ?? throw new InvalidOperationException("Set XKSEF_SQL_TEST_EXPECTED_SERVER to the verified LocalDB server name before running these integration tests.");
-            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json", optional: false)
+            var configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json", optional: false).UseIsolatedSqlServer()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Jwt:Issuer"] = "registration-sql-tests", ["Jwt:Audience"] = "registration-sql-tests",
                     ["Jwt:SigningKey"] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)), ["Jwt:ExpirationMinutes"] = "5"
                 }).Build();
             string connectionString = configuration.GetConnectionString("DefaultConnection")!;
-            var builder = new SqlConnectionStringBuilder(connectionString);
-            if (!string.Equals(builder.DataSource, @"(LocalDb)\MSSQLLocalDB", StringComparison.OrdinalIgnoreCase) || builder.InitialCatalog != "xKsef")
-                throw new InvalidOperationException("These tests permit only the local MSSQLLocalDB/xKsef target.");
-            await using (var connection = new SqlConnection(connectionString))
-            {
-                await connection.OpenAsync();
-                using var guard = connection.CreateCommand();
-                guard.CommandText = "SELECT CASE WHEN DB_NAME()=N'xKsef' AND CONVERT(int,SERVERPROPERTY('IsLocalDB'))=1 AND CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) COLLATE Latin1_General_100_BIN2=@server THEN 1 ELSE 0 END";
-                guard.Parameters.AddWithValue("@server", expectedServer);
-                Assert.Equal(1, Convert.ToInt32(await guard.ExecuteScalarAsync()));
-            }
+            await SqlServerTestDatabase.VerifyAsync(connectionString);
             try
             {
                 api.Host = await new HostBuilder().ConfigureWebHost(web => web.UseTestServer().ConfigureLogging(logging => logging.ClearProviders())

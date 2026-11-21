@@ -52,7 +52,7 @@ public sealed partial class BrowserAuthenticationTests
         public static async Task<Fixture> CreateAsync()
         {
             var f = new Fixture();
-            f.Configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json")
+            f.Configuration = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory).AddJsonFile("appsettings.Test.json").UseIsolatedSqlServer()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Jwt:Issuer"] = "browser-tests", ["Jwt:Audience"] = "browser-tests", ["Jwt:ExpirationMinutes"] = "5",
@@ -60,15 +60,7 @@ public sealed partial class BrowserAuthenticationTests
                     ["DataProtection:KeyRingPath"] = f.KeyPath, ["DataProtection:ApplicationName"] = f.Prefix,
                     ["BrowserSessions:Cleanup:Enabled"] = "false"
                 }).Build();
-            var cs = new SqlConnectionStringBuilder(f.Configuration.GetConnectionString("DefaultConnection"));
-            if (!string.Equals(cs.DataSource, @"(LocalDb)\MSSQLLocalDB", StringComparison.OrdinalIgnoreCase) || cs.InitialCatalog != "xKsef") throw new InvalidOperationException("Only LocalDB/xKsef is permitted.");
-            string server = Environment.GetEnvironmentVariable("XKSEF_SQL_TEST_EXPECTED_SERVER") ?? throw new InvalidOperationException("Verify LocalDB and set XKSEF_SQL_TEST_EXPECTED_SERVER.");
-            await using (var connection = new SqlConnection(cs.ConnectionString))
-            {
-                await connection.OpenAsync(); using var guard = connection.CreateCommand();
-                guard.CommandText = "SELECT CASE WHEN DB_NAME()=N'xKsef' AND CONVERT(int,SERVERPROPERTY('IsLocalDB'))=1 AND CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) COLLATE Latin1_General_100_BIN2=@server THEN 1 ELSE 0 END";
-                guard.Parameters.AddWithValue("@server", server); Assert.Equal(1, Convert.ToInt32(await guard.ExecuteScalarAsync()));
-            }
+            await SqlServerTestDatabase.VerifyAsync(f.Configuration.GetConnectionString("DefaultConnection")!);
             try
             {
                 await f.StartAsync(); using var scope = f.Scope(); var service = scope.ServiceProvider.GetRequiredService<IUserCreationService>();
