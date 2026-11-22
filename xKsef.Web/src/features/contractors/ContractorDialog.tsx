@@ -5,7 +5,11 @@ import { useSession } from '../../platform/session/SessionProvider';
 import { createEmptyContractorForm, REGISTERED_OFFICE, toContractorForm } from './ContractorFormModel';
 import type { ContractorFormAddress } from './ContractorFormModel';
 import { ContractorApiClient } from './ContractorApiClient';
-import { validateContractorForm, toContractorRequest } from './ContractorFormValidation';
+import { validateContractorForm, validateContractorIdentifiers, toContractorRequest } from './ContractorFormValidation';
+import type { GusContractorDto, GusIdentifierType } from './ContractorApiContracts';
+import { applyGusContractor } from './GusContractorMapping';
+import { GusResultsDialog } from './GusResultsDialog';
+import { GusSearchDialog } from './GusSearchDialog';
 import { ApiError, errorMessage } from '../../platform/api/ApiError';
 import { StaleContextError } from '../../platform/session/RequestContext';
 import type { RequestSnapshot } from '../../platform/session/RequestContext';
@@ -37,6 +41,12 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loadRevision, setLoadRevision] = useState(0);
+  const [gusSearchOpen, setGusSearchOpen] = useState(false);
+  const [gusLoading, setGusLoading] = useState(false);
+  const [gusError, setGusError] = useState<string | null>(null);
+  const [gusResults, setGusResults] = useState<readonly GusContractorDto[] | null>(null);
+  const formRevision = useRef(0);
+  const gusRequest = useRef<{ controller: AbortController; revision: number } | null>(null);
   const address = form.addresses[0];
   const blocked = saving || loadStatus !== 'ready' || notFound || session.verification !== 'idle';
 
@@ -68,6 +78,7 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
   useEffect(() => {
     const unsubscribe = api.context.subscribe(() => {
       if (!api.context.isCurrent(openingContext)) {
+        gusRequest.current?.controller.abort();
         saveControllerRef.current?.abort();
         onClose();
       }
@@ -79,11 +90,71 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
     if (!api.context.isCurrent(openingContext)) onClose();
 
     return () => {
+      gusRequest.current?.controller.abort();
+      gusRequest.current = null;
       saveControllerRef.current?.abort();
       unsubscribe();
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [api, onClose, openingContext]);
+
+  useEffect(() => {
+    if (session.verification !== 'idle') cancelGus();
+  }, [session.verification]);
+
+  function cancelGus() {
+    gusRequest.current?.controller.abort();
+    gusRequest.current = null;
+    setGusLoading(false);
+    setGusResults(null);
+    setGusSearchOpen(false);
+  }
+
+  function formChanged() {
+    formRevision.current++;
+    if (gusRequest.current) {
+      cancelGus();
+      setGusError('Formularz został zmieniony. Pobierz dane z GUS ponownie.');
+    }
+  }
+
+  function applyGus(result: GusContractorDto) {
+    const pending = gusRequest.current;
+    if (!pending || pending.controller.signal.aborted || pending.revision !== formRevision.current || !api.context.isCurrent(openingContext)) return;
+    setForm(previous => applyGusContractor(previous, result));
+    formRevision.current++;
+    setSaveError(null);
+    cancelGus();
+  }
+
+  async function fetchGus(gusIdentifier: GusIdentifierType, identifier: string) {
+    if (blocked || savingRef.current || gusRequest.current || !api.context.isCurrent(openingContext)) return;
+    setGusError(null);
+    if (!identifier.trim()) { setGusError('Uzupełnij wybrany identyfikator wyszukiwania.'); return; }
+    const validation = validateContractorIdentifiers({ nip: gusIdentifier === 'nip' ? identifier : '', regon: gusIdentifier === 'regon' ? identifier : '', krsNumber: gusIdentifier === 'krs' ? identifier : '' });
+    if (validation) { setGusError(validation); return; }
+    const pending = { controller: new AbortController(), revision: formRevision.current };
+    gusRequest.current = pending;
+    setGusLoading(true);
+    try {
+      api.context.assertCurrent(openingContext);
+      const results = await contractorClient.getFromGus(gusIdentifier, identifier, pending.controller.signal);
+      if (gusRequest.current !== pending || pending.controller.signal.aborted || pending.revision !== formRevision.current) return;
+      api.context.assertCurrent(openingContext);
+      if (results.length === 1) applyGus(results[0]);
+      else { setGusLoading(false); setGusSearchOpen(false); setGusResults(results); }
+    } catch (error) {
+      if (gusRequest.current !== pending || pending.controller.signal.aborted || !api.context.isCurrent(openingContext) || error instanceof StaleContextError) return;
+      const message = error instanceof ApiError && error.status === 429
+        ? `Zbyt wiele zapytań do GUS.${error.retryAfterSeconds !== null ? ` Spróbuj ponownie za ${error.retryAfterSeconds} s.` : ' Spróbuj ponownie później.'}`
+        : error instanceof ApiError && error.status === 502 ? 'Nie udało się pobrać danych z GUS. Spróbuj ponownie później.'
+        : error instanceof ApiError && error.status === 504 ? 'Przekroczono czas pobierania danych z GUS. Spróbuj ponownie później.'
+        : errorMessage(error);
+      setGusError(message);
+      gusRequest.current = null;
+      setGusLoading(false);
+    }
+  }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {
@@ -115,10 +186,12 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
   }
 
   function updateField<K extends keyof typeof form>(field: K, value: (typeof form)[K]) {
+    formChanged();
     setForm(previous => ({ ...previous, [field]: value }));
   }
 
   function updateAddress<K extends keyof ContractorFormAddress>(field: K, value: ContractorFormAddress[K]) {
+    formChanged();
     setForm(previous => {
       const current = previous.addresses[0] ?? { addressType: REGISTERED_OFFICE, countryCode: 'PL', street: '', buildingNumber: '', apartmentNumber: '', postalCode: '', city: '' };
       return { ...previous, addresses: [{ ...current, [field]: value }] };
@@ -126,7 +199,7 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
   }
 
   async function saveContractor() {
-    if (savingRef.current || blocked) return;
+    if (savingRef.current || blocked || gusRequest.current || gusSearchOpen) return;
     if (!api.context.isCurrent(openingContext)) { onClose(); return; }
 
     setSaveError(null);
@@ -194,10 +267,14 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
     <input type="text" value={form.regon} onChange={event => updateField('regon', event.target.value)} />
   </label>
 
-  <label>
-    KRS
-    <input type="text" value={form.krsNumber} onChange={event => updateField('krsNumber', event.target.value)} />
-  </label>
+  <div className="contractor-form-full contractor-gus-actions">
+    <label>
+      KRS
+      <input type="text" value={form.krsNumber} onChange={event => updateField('krsNumber', event.target.value)} />
+    </label>
+    <button type="button" className="secondary-button" disabled={gusLoading || gusSearchOpen || gusResults !== null} onClick={() => { setGusError(null); setGusSearchOpen(true); }}>Pobierz dane z GUS</button>
+    {!gusSearchOpen && gusError && <p className="error-message" role="alert">{gusError}</p>}
+  </div>
 
   <label>
     Numer VAT UE
@@ -257,9 +334,11 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
 <div className="contractor-form-actions">
 {saveError && <p className="error-message" role="alert">{saveError}</p>}
 <button ref={closeButtonRef} className="secondary-button" type="button" onClick={onClose}>Anuluj</button>
-<button className="secondary-button" type="button" disabled={blocked} onClick={() => void saveContractor()}>{saving ? 'Zapisywanie…' : 'Zapisz'}</button>
+<button className="secondary-button" type="button" disabled={blocked || gusSearchOpen || gusLoading || gusResults !== null} onClick={() => void saveContractor()}>{saving ? 'Zapisywanie…' : 'Zapisz'}</button>
 </div>
       </div>
+      {gusSearchOpen && <GusSearchDialog loading={gusLoading} error={gusError} onSearch={(kind, identifier) => void fetchGus(kind, identifier)} onClose={cancelGus} />}
+      {gusResults !== null && <GusResultsDialog results={gusResults} onSelect={applyGus} onClose={cancelGus} />}
     </div>,
     document.body
   );

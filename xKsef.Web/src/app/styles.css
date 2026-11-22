@@ -311,6 +311,20 @@ box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
   grid-column: 1 / -1;
 }
 
+.contractor-gus-actions { display: grid; grid-template-columns: subgrid; align-items: end; gap: 12px 16px; }
+.contractor-gus-actions > button { justify-self: start; }
+.contractor-gus-actions > .error-message { grid-column: 1 / -1; }
+.gus-search-fields { display: grid; gap: 12px; }
+.gus-search-fields label { display: grid; gap: 4px; }
+.gus-search-fields input { padding: 6px; }
+.gus-results-dialog { border: 0; }
+.gus-results-dialog:not([open]) { display: none; }
+.gus-results-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.gus-results-table { width: 100%; border-collapse: collapse; }
+.gus-results-table th, .gus-results-table td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; }
+.gus-results-table tbody tr { cursor: pointer; }
+.gus-results-table tr[aria-selected="true"] { background: #e7f1ff; }
+
 .contractor-form > label {
   /* display: flex;
   flex-direction: column;

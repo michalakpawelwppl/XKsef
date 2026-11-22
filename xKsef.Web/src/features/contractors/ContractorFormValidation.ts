@@ -8,14 +8,8 @@ export function validateContractorForm(form: ContractorFormData): string | null 
   if (form.fullName.trim().length > 500) return 'Nazwa pełna nie może przekraczać 500 znaków.';
   if (form.shortName.trim().length > 100) return 'Nazwa skrócona nie może przekraczać 100 znaków.';
 
-  const nip = form.nip.trim();
-  if (nip && (!/^[0-9 -]+$/.test(nip) || !/^\d{10}$/.test(normalizeNip(nip)))) return 'NIP musi zawierać 10 cyfr. Dozwolone separatory: spacja i myślnik.';
-  if (nip && remainder(normalizeNip(nip), [6, 5, 7, 2, 3, 4, 5, 6, 7]) !== Number(normalizeNip(nip)[9])) return 'Nieprawidłowa suma kontrolna NIP.';
-  if (form.regon.trim() && !/^(\d{9}|\d{14})$/.test(form.regon.trim())) return 'REGON musi zawierać 9 lub 14 cyfr.';
-  const regon = form.regon.trim();
-  if (regon && remainder(regon, [8, 9, 2, 3, 4, 5, 6, 7]) % 10 !== Number(regon[8])) return 'Nieprawidłowa suma kontrolna REGON.';
-  if (regon.length === 14 && remainder(regon, [2, 4, 8, 5, 0, 9, 7, 3, 6, 1, 2, 4, 8]) % 10 !== Number(regon[13])) return 'Nieprawidłowa suma kontrolna REGON jednostki lokalnej.';
-  if (form.krsNumber.trim() && !/^\d{10}$/.test(form.krsNumber.trim())) return 'KRS musi zawierać 10 cyfr.';
+  const identifierError = validateContractorIdentifiers(form);
+  if (identifierError) return identifierError;
 
   if (form.euVatNumber.trim().length > 32) return 'Numer VAT UE nie może przekraczać 32 znaków.';
   if (form.isEuVatRegistered && !form.euVatNumber.trim()) return 'Numer VAT UE jest wymagany przy rejestracji do VAT UE.';
@@ -66,4 +60,17 @@ function normalizeNip(value: string): string {
 
 function remainder(value: string, weights: readonly number[]): number {
   return weights.reduce((sum, weight, index) => sum + Number(value[index]) * weight, 0) % 11;
+}
+
+export function validateContractorIdentifiers(form: Pick<ContractorFormData, 'nip' | 'regon' | 'krsNumber'>): string | null {
+  const nip = form.nip.trim();
+  if (nip && (!/^[0-9 -]+$/.test(nip) || !/^\d{10}$/.test(normalizeNip(nip)))) return 'NIP musi zawierać 10 cyfr. Dozwolone separatory: spacja i myślnik.';
+  if (nip && remainder(normalizeNip(nip), [6, 5, 7, 2, 3, 4, 5, 6, 7]) !== Number(normalizeNip(nip)[9])) return 'Nieprawidłowa suma kontrolna NIP.';
+  if (form.regon.trim() && !/^(\d{9}|\d{14})$/.test(form.regon.trim())) return 'REGON musi zawierać 9 lub 14 cyfr.';
+  const regon = form.regon.trim();
+  if (regon && remainder(regon, [8, 9, 2, 3, 4, 5, 6, 7]) % 10 !== Number(regon[8])) return 'Nieprawidłowa suma kontrolna REGON.';
+  if (regon.length === 14 && remainder(regon, [2, 4, 8, 5, 0, 9, 7, 3, 6, 1, 2, 4, 8]) % 10 !== Number(regon[13])) return 'Nieprawidłowa suma kontrolna REGON jednostki lokalnej.';
+  if (form.krsNumber.trim() && !/^\d{10}$/.test(form.krsNumber.trim())) return 'KRS musi zawierać 10 cyfr.';
+
+  return null;
 }
