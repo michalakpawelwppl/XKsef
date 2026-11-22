@@ -14,6 +14,15 @@ function stored() {
 function validForm() { return toContractorForm(stored()); }
 
 describe('contractor form mapping', () => {
+  it.each([true, false])('maps an edited activation flag without changing other fields (initial=%s)', initial => {
+    const dto = stored(); dto.isActive = initial;
+    const form = toContractorForm(dto);
+    expect(form.isActive).toBe(initial);
+    const before = toContractorRequest(form);
+    form.isActive = !initial;
+    expect(toContractorRequest(form)).toEqual({ ...before, isActive: !initial });
+    expect(dto.isActive).toBe(initial);
+  });
   it('round-trips every field and preserves inactive status without DTO metadata', () => {
     const dto = stored();
     Object.assign(dto, { nip: '856-734-62-15', regon: '12345678512347', krsNumber: '0000123456', euVatNumber: 'PL8567346215', otherTaxNumber: 'OTHER', isEuVatRegistered: true });

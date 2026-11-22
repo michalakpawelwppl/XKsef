@@ -93,7 +93,7 @@ test('opens by double click, loads fresh data and saves all fields while preserv
   await expect(dialog(page).getByLabel('NIP', { exact: true })).toHaveValue('8567346215');
   await expect(dialog(page).getByLabel('Zarejestrowany jako podatnik VAT UE')).toBeChecked();
   await expect(dialog(page).getByLabel('Numer lokalu')).toHaveValue('3');
-  await expect(dialog(page).getByRole('checkbox')).toHaveCount(1);
+  await expect(dialog(page).getByLabel('Kontrahent aktywny', { exact: true })).not.toBeChecked();
   await name(page).fill('Firma zmieniona');
   await dialog(page).getByLabel('Nazwa skrócona *', { exact: true }).fill('FIR2');
   await dialog(page).getByLabel('REGON', { exact: true }).fill('12345678512347');
@@ -114,8 +114,10 @@ test('enables Edit only for exactly one selection and cancellation never sends P
   const first = page.locator(`[row-id="${id}"] input[type="checkbox"]`); const second = page.locator(`[row-id="${secondId}"] input[type="checkbox"]`);
   await first.check(); await expect(edit).toBeEnabled(); await second.check(); await expect(edit).toBeDisabled(); await second.uncheck(); await edit.click();
   await expect(name(page)).toHaveValue('Firma z listy'); await name(page).fill('Niezapisana');
+  await dialog(page).getByLabel('Kontrahent aktywny', { exact: true }).check();
   await dialog(page).getByRole('button', { name: 'Anuluj' }).click(); await expect(dialog(page)).toHaveCount(0); expect(catalog.saves).toEqual([]);
-  await openEdit(page); await page.keyboard.press('Escape'); await expect(dialog(page)).toHaveCount(0); expect(catalog.saves).toEqual([]);
+  await openEdit(page); await expect(dialog(page).getByLabel('Kontrahent aktywny', { exact: true })).not.toBeChecked();
+  await page.keyboard.press('Escape'); await expect(dialog(page)).toHaveCount(0); expect(catalog.saves).toEqual([]);
 });
 
 for (const addAddress of [false, true]) test(`handles missing address (fill address=${addAddress}) without changing activation`, async ({ page, catalog }) => {
@@ -291,6 +293,8 @@ test('closing during PUT aborts the request and a late success cannot close a su
 test('adding a contractor sends a full POST with tenant and CSRF and refreshes the list', async ({ page, catalog }) => {
   await openPage(page); await page.getByRole('button', { name: 'Nowy kontrahent', exact: true }).click();
   const form = page.getByRole('dialog', { name: 'Nowy kontrahent', exact: true });
+  await expect(form.getByLabel('Kontrahent aktywny', { exact: true })).toBeChecked();
+  await expect(form.getByLabel('Kontrahent aktywny', { exact: true })).toBeDisabled();
   for (const [label, value] of [['Nazwa pełna *', 'Nowa firma'], ['Nazwa skrócona *', 'NOWA'], ['NIP', '8567346215'], ['REGON', '12345678512347'], ['KRS', '0000123456'], ['Numer VAT UE', 'PL8567346215'], ['Inny numer identyfikacji podatkowej', 'OTHER'], ['Kraj', 'PL'], ['Kod pocztowy', '60-001'], ['Miejscowość', 'Poznań'], ['Ulica', 'Kwiatowa'], ['Numer budynku', '12'], ['Numer lokalu', '3']]) await form.getByLabel(label, { exact: true }).fill(value);
   await form.getByLabel('Zarejestrowany jako podatnik VAT UE').check();
   await form.getByRole('button', { name: 'Zapisz', exact: true }).click(); await expect(form).toHaveCount(0);
@@ -310,4 +314,18 @@ test('a list refresh failure after successful PUT preserves filters and does not
   await expect(page.getByLabel('Szukaj kontrahenta')).toHaveValue('Firma');
   catalog.listStatus = 200; await page.getByRole('button', { name: 'Spróbuj ponownie', exact: true }).click();
   await expect(cell(page).locator('.copy-cell-text')).toHaveText('Firma po zapisie'); expect(catalog.saves).toHaveLength(1);
+});
+
+for (const [initial, target] of [[true, false], [false, true], [true, true], [false, false]]) test(`editing activation ${initial} → ${target} saves the full form and keeps the row visible`, async ({ page, catalog }) => {
+  catalog.dto.isActive = initial; await openPage(page); await openEdit(page);
+  const active = dialog(page).getByLabel('Kontrahent aktywny', { exact: true });
+  await expect(active).toBeChecked({ checked: initial }); await expect(active).toBeEnabled();
+  await active.setChecked(target); await expect(active).toBeChecked({ checked: target });
+  expect(catalog.saves).toEqual([]); expect(catalog.dto.isActive).toBe(initial);
+  await name(page).fill('Firma po edycji');
+  await dialog(page).getByRole('button', { name: 'Zapisz', exact: true }).click(); await expect(dialog(page)).toHaveCount(0);
+  const { id: _id, createdAt: _createdAt, ...expected } = contractor();
+  expect(catalog.saves).toEqual([{ ...expected, fullName: 'Firma po edycji', isActive: target }]);
+  await expect(cell(page).locator('.copy-cell-text')).toHaveText('Firma po edycji');
+  await expect(page.locator(`[row-id="${id}"] [col-id="isActive"] .copy-cell-text`)).toHaveText(target ? 'Aktywny' : 'Nieaktywny');
 });

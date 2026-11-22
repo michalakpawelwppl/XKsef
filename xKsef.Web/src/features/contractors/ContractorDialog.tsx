@@ -214,6 +214,11 @@ export function ContractorDialog({ onClose, onSaved, contractorId, openingContex
     Zarejestrowany jako podatnik VAT UE
   </label>
 
+  <label className="contractor-form-checkbox">
+    <input type="checkbox" checked={form.isActive} disabled={!contractorId} onChange={event => updateField('isActive', event.target.checked)} />
+    Kontrahent aktywny
+  </label>
+
   <h3 className="contractor-form-section">Adres siedziby</h3>
   {!address && <p className="contractor-form-full">Brak adresu siedziby. Uzupełnienie pól doda adres przy zapisie.</p>}
 
