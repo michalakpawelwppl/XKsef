@@ -18,4 +18,5 @@ public sealed class GusBirException(GusBirError error, string operation, int? se
     public GusBirError Error { get; } = error;
     public string Operation { get; } = operation;
     public int? ServiceCode { get; } = serviceCode;
+    public GusBirDiagnostics? Diagnostics { get; init; }
 }

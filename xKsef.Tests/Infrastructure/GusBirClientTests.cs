@@ -342,7 +342,7 @@ public sealed partial class GusBirClientTests : IDisposable
     [InlineData(503, GusBirError.Unavailable)]
     [InlineData(429, GusBirError.Unavailable)]
     [InlineData(502, GusBirError.Unavailable)]
-    [InlineData(401, GusBirError.Authentication)]
+    [InlineData(401, GusBirError.Communication)]
     public async Task HttpFailuresHaveTypedErrorsWithoutRetries(int status, GusBirError expected)
     {
         using var handler = new StubHandler((_, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)status)));

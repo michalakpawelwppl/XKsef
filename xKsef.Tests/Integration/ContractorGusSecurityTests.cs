@@ -198,11 +198,25 @@ public sealed partial class BrowserAuthenticationTests
             "limit" => new GusRateLimitExceededException(TimeSpan.FromMilliseconds(2001)),
             "sql" => new GusRateLimiterUnavailableException(new IOException(secrets)),
             _ => new GusBirException(kind == "timeout" ? GusBirError.Timeout : kind == "fault" ? GusBirError.ServiceFault : GusBirError.Communication, secrets)
+            {
+                Diagnostics = new GusBirDiagnostics(GusBirFailureKind.Tls, GusBirFailureStage.SendRequest,
+                    HttpRequestError.SecureConnectionError, 599, GusBirContentType.Other, GusBirSystemErrorKind.Win32, 473921)
+                {
+                    SoapFaultCode = GusBirSoapFaultCode.Sender,
+                    SoapFaultSubcode = GusBirSoapFaultSubcode.ActionNotSupported
+                }
+            }
         };
         using var response = await f.Browser().SendAsync(HttpMethod.Get, GusPath, authorization: "Bearer " + GusJwt(f), tenantId: tenant);
         Assert.Equal((HttpStatusCode)status, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
         var payload = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("diagnostics", payload.ToLowerInvariant());
+        Assert.DoesNotContain("SecureConnectionError", payload);
+        Assert.DoesNotContain("SoapFaultCode", payload);
+        Assert.DoesNotContain("ActionNotSupported", payload);
+        Assert.DoesNotContain("473921", payload);
+        Assert.DoesNotContain("599", payload);
         foreach (var secret in new[] { sid, key, soap, connection, "secret-sql-server", "secret-db", "secret-user", "secret-password", internalSql })
             Assert.DoesNotContain(secret, payload);
         if (status == 429) Assert.Equal("3", Assert.Single(response.Headers.GetValues("Retry-After")));

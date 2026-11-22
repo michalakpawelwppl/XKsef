@@ -67,8 +67,8 @@ public sealed partial class GusBirClientTests
 
     [Theory]
     [InlineData("soap-fault", GusBirError.ServiceFault)]
-    [InlineData("unauthorized", GusBirError.Authentication)]
-    [InlineData("forbidden", GusBirError.Authentication)]
+    [InlineData("unauthorized", GusBirError.Communication)]
+    [InlineData("forbidden", GusBirError.Communication)]
     [InlineData("data-error", GusBirError.ServiceRejected)]
     [InlineData("whitespace-diagnostic", GusBirError.InvalidResponse)]
     [InlineData("text-diagnostic", GusBirError.InvalidResponse)]

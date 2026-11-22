@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Run only GusBirLoginOnlyLiveTests.TestEnvironment_LoginOnly after explicit authorization. -->
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <XKSEF_RUN_GUS_BIR_LOGIN_ONLY_TEST>1</XKSEF_RUN_GUS_BIR_LOGIN_ONLY_TEST>
+      <XKSEF_RUN_GUS_BIR_LIVE_TEST>0</XKSEF_RUN_GUS_BIR_LIVE_TEST>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

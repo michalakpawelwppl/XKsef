@@ -105,7 +105,8 @@ public sealed class GusBirClient : IGusBirClient
                 return await SearchOnceAsync(field, identifier, budget, limiter, cancellationToken);
             }
         }
-        catch (GusBirException exception) when (exception.Error is GusBirError.SessionExpired or GusBirError.Authentication)
+        catch (GusBirException exception) when (exception.Error is GusBirError.SessionExpired or GusBirError.Authentication ||
+            exception.Diagnostics is { Kind: GusBirFailureKind.Http, HttpStatusCode: 401 or 403 })
         {
             _sid = null;
             throw;
@@ -119,8 +120,30 @@ public sealed class GusBirClient : IGusBirClient
 
     private async Task<IReadOnlyList<GusEntity>> SearchOnceAsync(string field, string identifier, GusWaitBudget budget, IGusRateLimiter limiter, CancellationToken cancellationToken)
     {
-        var result = await SendAsync("DaneSzukajPodmioty", new XElement(GusBirSoap.Service + "pParametryWyszukiwania", new XElement(GusBirSoap.Data + field, identifier)), _sid, budget, limiter, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(result)) return ParseEntities(result);
+        int? responseStatus = null;
+        var responseContentType = GusBirContentType.Missing;
+        var result = await SendAsync("DaneSzukajPodmioty", new XElement(GusBirSoap.Service + "pParametryWyszukiwania", new XElement(GusBirSoap.Data + field, identifier)), _sid, budget, limiter, cancellationToken,
+            (status, contentType) => { responseStatus = status; responseContentType = contentType; });
+        if (!string.IsNullOrWhiteSpace(result))
+        {
+            try { return ParseEntities(result); }
+            catch (XmlException)
+            {
+                throw new GusBirException(GusBirError.InvalidResponse, "DaneSzukajPodmioty")
+                {
+                    Diagnostics = new GusBirDiagnostics(GusBirFailureKind.Xml, GusBirFailureStage.ParseXml,
+                        HttpStatusCode: responseStatus, ContentType: responseContentType)
+                };
+            }
+            catch (GusBirException exception) when (exception.Error == GusBirError.InvalidResponse)
+            {
+                throw new GusBirException(exception.Error, exception.Operation, exception.ServiceCode)
+                {
+                    Diagnostics = new GusBirDiagnostics(GusBirFailureKind.InvalidResponse, GusBirFailureStage.ValidateResult,
+                        HttpStatusCode: responseStatus, ContentType: responseContentType)
+                };
+            }
+        }
         var diagnostic = await SendAsync("GetValue", new XElement(GusBirSoap.Diagnostic + "pNazwaParametru", "KomunikatKod"), _sid, budget, limiter, cancellationToken);
         // BIR 1.2 section 3.4 explicitly defines an empty KomunikatKod result and code 7 as no session.
         // Whitespace/malformed replies, authentication errors and generic SOAP faults are not proof of it.
@@ -199,7 +222,7 @@ public sealed class GusBirClient : IGusBirClient
         throw new GusBirException(code == 7 ? GusBirError.SessionExpired : GusBirError.ServiceRejected, operation, code);
     }
 
-    private async Task<string> SendAsync(string operation, XElement parameter, string? sid, GusWaitBudget budget, IGusRateLimiter limiter, CancellationToken cancellationToken)
+    private async Task<string> SendAsync(string operation, XElement parameter, string? sid, GusWaitBudget budget, IGusRateLimiter limiter, CancellationToken cancellationToken, Action<int, GusBirContentType>? responseReceived = null)
     {
         using var http = _httpClientFactory.CreateClient(GusBirServiceCollectionExtensions.HttpClientName);
         using var request = GusBirSoap.CreateRequest(_options.Endpoint, operation, parameter, sid);
@@ -213,39 +236,88 @@ public sealed class GusBirClient : IGusBirClient
             timeout.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
             if (!permit.IsUsable || !permit.TryUse()) continue;
             // No await, serialization or client creation between consuming the permit and sending.
-            return await SendHttpAsync(http, request, operation, timeout.Token, cancellationToken);
+            return await SendHttpAsync(http, request, operation, timeout.Token, cancellationToken, responseReceived);
         }
     }
 
-    private static async Task<string> SendHttpAsync(HttpClient http, HttpRequestMessage request, string operation, CancellationToken timeoutToken, CancellationToken cancellationToken)
+    private static async Task<string> SendHttpAsync(HttpClient http, HttpRequestMessage request, string operation, CancellationToken timeoutToken, CancellationToken cancellationToken, Action<int, GusBirContentType>? responseReceived = null)
     {
+        var stage = GusBirFailureStage.SendRequest;
+        int? status = null;
+        var contentType = GusBirContentType.Missing;
+        bool IsHttpFailure() => status is < 200 or >= 300;
+        GusBirFailureKind ParsingFailureKind() => stage switch
+        {
+            GusBirFailureStage.ParseXml => GusBirFailureKind.Xml,
+            GusBirFailureStage.ParseMtom => GusBirFailureKind.Mtom,
+            GusBirFailureStage.ValidateSoap => GusBirFailureKind.SoapValidation,
+            _ => GusBirFailureKind.InvalidResponse
+        };
+        GusBirException InvalidResponseFailure() => new(IsHttpFailure() ? GusBirError.Communication : GusBirError.InvalidResponse, operation)
+        {
+            Diagnostics = new GusBirDiagnostics(IsHttpFailure() ? GusBirFailureKind.Http : ParsingFailureKind(), stage,
+                HttpStatusCode: status, ContentType: contentType)
+        };
         try
         {
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutToken);
+            status = (int)response.StatusCode;
+            stage = GusBirFailureStage.ValidateHttpResponse;
+            contentType = GusBirTransportDiagnostics.ContentType(response.Content);
             if (response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests or HttpStatusCode.BadGateway or HttpStatusCode.GatewayTimeout)
                 throw new GusBirException(GusBirError.Unavailable, operation);
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-                throw new GusBirException(GusBirError.Authentication, operation);
-            var result = await GusBirSoap.ReadResultAsync(response.Content, operation, timeoutToken);
+                throw new GusBirException(GusBirError.Communication, operation);
+            stage = GusBirFailureStage.ReadResponse;
+            var result = await GusBirSoap.ReadResultAsync(response.Content, operation, timeoutToken, value => stage = value);
             if (!response.IsSuccessStatusCode)
                 throw new GusBirException(GusBirError.Communication, operation);
+            responseReceived?.Invoke(status.Value, contentType);
             return result;
+        }
+        catch (GusBirException exception)
+        {
+            var error = IsHttpFailure() && exception.Error == GusBirError.InvalidResponse ? GusBirError.Communication : exception.Error;
+            var kind = exception.Error switch
+            {
+                GusBirError.ServiceFault => GusBirFailureKind.SoapFault,
+                GusBirError.InvalidResponse => IsHttpFailure() ? GusBirFailureKind.Http : ParsingFailureKind(),
+                _ => GusBirFailureKind.Http
+            };
+            var diagnostic = exception.Diagnostics ?? new GusBirDiagnostics(kind, stage);
+            throw new GusBirException(error, exception.Operation, exception.ServiceCode)
+            {
+                Diagnostics = diagnostic with { Kind = kind, Stage = stage, HttpStatusCode = status, ContentType = contentType }
+            };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new GusBirException(GusBirError.Timeout, operation);
+            throw new GusBirException(GusBirError.Timeout, operation)
+            {
+                Diagnostics = new GusBirDiagnostics(GusBirFailureKind.Timeout, stage, HttpStatusCode: status, ContentType: contentType)
+            };
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
-            throw new GusBirException(GusBirError.Communication, operation);
+            throw new GusBirException(GusBirError.Communication, operation)
+            {
+                Diagnostics = GusBirTransportDiagnostics.FromException(exception, stage, status, contentType)
+            };
+        }
+        catch (IOException exception)
+        {
+            throw new GusBirException(GusBirError.Communication, operation)
+            {
+                Diagnostics = GusBirTransportDiagnostics.FromException(exception, stage, status, contentType)
+            };
         }
         catch (XmlException)
         {
-            throw new GusBirException(GusBirError.InvalidResponse, operation);
+            throw InvalidResponseFailure();
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or FormatException or ArgumentException)
+        catch (Exception exception) when (exception is InvalidDataException or FormatException or ArgumentException)
         {
-            throw new GusBirException(GusBirError.InvalidResponse, operation);
+            throw InvalidResponseFailure();
         }
     }
 

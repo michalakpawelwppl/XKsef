@@ -32,7 +32,7 @@ internal static class GusBirSoap
         return request;
     }
 
-    internal static async Task<string> ReadResultAsync(HttpContent content, string operation, CancellationToken cancellationToken)
+    internal static async Task<string> ReadResultAsync(HttpContent content, string operation, CancellationToken cancellationToken, Action<GusBirFailureStage>? reportStage = null)
     {
         var mediaType = content.Headers.ContentType;
         if (content.Headers.ContentLength > MaximumResponseBytes)
@@ -42,6 +42,7 @@ internal static class GusBirSoap
         XDocument document;
         if (string.Equals(mediaType?.MediaType, "multipart/related", StringComparison.OrdinalIgnoreCase))
         {
+            reportStage?.Invoke(GusBirFailureStage.ParseMtom);
             var boundary = Parameter(mediaType!, "boundary");
             if (string.IsNullOrEmpty(boundary) || boundary.Length > 128)
                 throw Invalid(operation);
@@ -49,25 +50,38 @@ internal static class GusBirSoap
             var multipart = new MultipartReader(boundary, new MemoryStream(bytes)) { BodyLengthLimit = MaximumResponseBytes };
             MultipartSection? section;
             document = null!;
-            while ((section = await multipart.ReadNextSectionAsync(cancellationToken)) is not null)
+            try
             {
-                var id = section.Headers?.TryGetValue("Content-ID", out var values) == true ? values.ToString().Trim('<', '>') : null;
-                if (start is not null && id != start)
-                    continue;
-                if (!MediaTypeHeaderValue.TryParse(section.ContentType, out var partType) || !IsXml(partType.MediaType))
-                    throw Invalid(operation);
-                document = Parse(await ReadBoundedAsync(section.Body, cancellationToken));
-                break;
+                while ((section = await multipart.ReadNextSectionAsync(cancellationToken)) is not null)
+                {
+                    var id = section.Headers?.TryGetValue("Content-ID", out var values) == true ? values.ToString().Trim('<', '>') : null;
+                    if (start is not null && id != start)
+                        continue;
+                    if (!MediaTypeHeaderValue.TryParse(section.ContentType, out var partType) || !IsXml(partType.MediaType))
+                        throw Invalid(operation);
+                    var xml = await ReadBoundedAsync(section.Body, cancellationToken);
+                    reportStage?.Invoke(GusBirFailureStage.ParseXml);
+                    document = Parse(xml);
+                    break;
+                }
+            }
+            catch (IOException)
+            {
+                // The HTTP body has already been buffered with a size limit. An IO failure here is malformed MIME, not a network failure.
+                throw Invalid(operation);
             }
             if (document is null)
                 throw Invalid(operation);
         }
         else
         {
+            reportStage?.Invoke(GusBirFailureStage.ValidateContentType);
             if (!IsXml(mediaType?.MediaType))
                 throw Invalid(operation);
+            reportStage?.Invoke(GusBirFailureStage.ParseXml);
             document = Parse(bytes);
         }
+        reportStage?.Invoke(GusBirFailureStage.ValidateSoap);
         if (document.Root?.Name != Soap + "Envelope")
             throw Invalid(operation);
         var bodies = document.Root.Elements(Soap + "Body").ToArray();
@@ -77,7 +91,14 @@ internal static class GusBirSoap
         if (elements.Length != 1)
             throw Invalid(operation);
         if (elements[0].Name == Soap + "Fault")
-            throw new GusBirException(GusBirError.ServiceFault, operation);
+            throw new GusBirException(GusBirError.ServiceFault, operation)
+            {
+                Diagnostics = new GusBirDiagnostics(GusBirFailureKind.SoapFault, GusBirFailureStage.ValidateSoap)
+                {
+                    SoapFaultCode = FaultCode(elements[0].Element(Soap + "Code")?.Element(Soap + "Value")),
+                    SoapFaultSubcode = FaultSubcode(elements[0].Element(Soap + "Code")?.Element(Soap + "Subcode")?.Element(Soap + "Value"))
+                }
+            };
         var service = operation == "GetValue" ? Diagnostic : Service;
         if (elements[0].Name != service + (operation + "Response"))
             throw Invalid(operation);
@@ -104,6 +125,55 @@ internal static class GusBirSoap
     private static bool IsXml(string? mediaType) => string.Equals(mediaType, "application/soap+xml", StringComparison.OrdinalIgnoreCase) || string.Equals(mediaType, "application/xop+xml", StringComparison.OrdinalIgnoreCase);
     private static string? Parameter(MediaTypeHeaderValue mediaType, string name) => mediaType.Parameters.FirstOrDefault(parameter => parameter.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value?.Trim('"');
     private static GusBirException Invalid(string operation) => new(GusBirError.InvalidResponse, operation);
+
+    private static GusBirSoapFaultCode FaultCode(XElement? value)
+    {
+        if (value is null) return GusBirSoapFaultCode.None;
+        var name = FaultName(value);
+        if (name?.Namespace != Soap) return GusBirSoapFaultCode.Other;
+        return name.LocalName switch
+        {
+            "Sender" => GusBirSoapFaultCode.Sender,
+            "Receiver" => GusBirSoapFaultCode.Receiver,
+            "VersionMismatch" => GusBirSoapFaultCode.VersionMismatch,
+            "MustUnderstand" => GusBirSoapFaultCode.MustUnderstand,
+            "DataEncodingUnknown" => GusBirSoapFaultCode.DataEncodingUnknown,
+            _ => GusBirSoapFaultCode.Other
+        };
+    }
+
+    private static GusBirSoapFaultSubcode FaultSubcode(XElement? value)
+    {
+        if (value is null) return GusBirSoapFaultSubcode.None;
+        var name = FaultName(value);
+        if (name?.Namespace != Addressing) return GusBirSoapFaultSubcode.Other;
+        return name.LocalName switch
+        {
+            "ActionNotSupported" => GusBirSoapFaultSubcode.ActionNotSupported,
+            "DestinationUnreachable" => GusBirSoapFaultSubcode.DestinationUnreachable,
+            "ActionMismatch" => GusBirSoapFaultSubcode.ActionMismatch,
+            "MessageAddressingHeaderRequired" => GusBirSoapFaultSubcode.MessageAddressingHeaderRequired,
+            "InvalidAddressingHeader" => GusBirSoapFaultSubcode.InvalidAddressingHeader,
+            "EndpointUnavailable" => GusBirSoapFaultSubcode.EndpointUnavailable,
+            _ => GusBirSoapFaultSubcode.Other
+        };
+    }
+
+    private static XName? FaultName(XElement value)
+    {
+        if (value.HasElements) return null;
+        var text = value.Value.Trim();
+        if (text.Length is 0 or > 128) return null;
+        var separator = text.IndexOf(':');
+        try
+        {
+            if (separator < 0) return value.GetDefaultNamespace() + XmlConvert.VerifyNCName(text);
+            var prefix = XmlConvert.VerifyNCName(text[..separator]);
+            var localName = XmlConvert.VerifyNCName(text[(separator + 1)..]);
+            return value.GetNamespaceOfPrefix(prefix) is { } ns ? ns + localName : null;
+        }
+        catch (Exception exception) when (exception is XmlException or ArgumentException) { return null; }
+    }
 
     private static async Task<byte[]> ReadBoundedAsync(Stream stream, CancellationToken cancellationToken)
     {
