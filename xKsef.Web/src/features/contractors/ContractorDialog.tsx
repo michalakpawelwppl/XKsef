@@ -1,49 +1,89 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { KeyboardEvent } from 'react';
 import { useSession } from '../../platform/session/SessionProvider';
-import { useState } from 'react';
-import { createEmptyContractorForm } from './ContractorFormModel';
+import { createEmptyContractorForm, REGISTERED_OFFICE, toContractorForm } from './ContractorFormModel';
 import type { ContractorFormAddress } from './ContractorFormModel';
-import { useMemo } from 'react';
 import { ContractorApiClient } from './ContractorApiClient';
 import { validateContractorForm, toContractorRequest } from './ContractorFormValidation';
-import { errorMessage } from '../../platform/api/ApiError';
+import { ApiError, errorMessage } from '../../platform/api/ApiError';
 import { StaleContextError } from '../../platform/session/RequestContext';
+import type { RequestSnapshot } from '../../platform/session/RequestContext';
 
 interface Props {
   readonly onClose: () => void;
   readonly onSaved: () => void;
+  readonly contractorId?: string;
+  readonly openingContext: RequestSnapshot;
 }
 
-export function ContractorDialog({ onClose, onSaved }: Props) {
-  const { api } = useSession();
+function failureMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 404) return 'Kontrahent nie istnieje lub nie jest dostępny w wybranym tenancie.';
+  if (error instanceof ApiError && error.validation.length) return error.validation.join(' ');
+  return errorMessage(error);
+}
+
+export function ContractorDialog({ onClose, onSaved, contractorId, openingContext }: Props) {
+  const { api, state: session } = useSession();
   const contractorClient = useMemo(() => new ContractorApiClient(api), [api]);
-const [saving, setSaving] = useState(false);
-const [saveError, setSaveError] = useState<string | null>(null);
-const saveControllerRef = useRef<AbortController | null>(null);
-const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveControllerRef = useRef<AbortController | null>(null);
+  const savingRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-const [form, setForm] = useState(createEmptyContractorForm);
+  const [form, setForm] = useState(createEmptyContractorForm);
+  const [loadStatus, setLoadStatus] = useState<'loading' | 'ready' | 'error'>(contractorId ? 'loading' : 'ready');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [loadRevision, setLoadRevision] = useState(0);
+  const address = form.addresses[0];
+  const blocked = saving || loadStatus !== 'ready' || notFound || session.verification !== 'idle';
 
   useEffect(() => {
-    const context = api.context.capture('tenant');
-const unsubscribe = api.context.subscribe(() => {
-  if (!api.context.isCurrent(context)) onClose();
-});
+    if (!contractorId) return;
+    const id = contractorId;
+    const controller = new AbortController();
+    setLoadStatus('loading');
+    setLoadError(null);
+    async function load() {
+      try {
+        api.context.assertCurrent(openingContext);
+        const result = await contractorClient.getContractor(id, controller.signal);
+        api.context.assertCurrent(openingContext);
+        if (controller.signal.aborted) return;
+        setForm(toContractorForm(result));
+        setLoadStatus('ready');
+      } catch (error) {
+        if (controller.signal.aborted || !api.context.isCurrent(openingContext) || error instanceof StaleContextError) return;
+        setNotFound(error instanceof ApiError && error.status === 404);
+        setLoadError(failureMessage(error));
+        setLoadStatus('error');
+      }
+    }
+    void load();
+    return () => controller.abort();
+  }, [api, contractorClient, contractorId, openingContext, loadRevision]);
+
+  useEffect(() => {
+    const unsubscribe = api.context.subscribe(() => {
+      if (!api.context.isCurrent(openingContext)) {
+        saveControllerRef.current?.abort();
+        onClose();
+      }
+    });
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     closeButtonRef.current?.focus();
 
-    if (!api.context.isCurrent(context)) onClose();
+    if (!api.context.isCurrent(openingContext)) onClose();
 
     return () => {
-  saveControllerRef.current?.abort();
-  unsubscribe();
-  if (previousFocus?.isConnected) previousFocus.focus();
-};
-  }, [api, onClose]);
+      saveControllerRef.current?.abort();
+      unsubscribe();
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [api, onClose, openingContext]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {
@@ -55,7 +95,7 @@ const unsubscribe = api.context.subscribe(() => {
 
     if (event.key !== 'Tab') return;
 
-    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') ?? []).filter(element => element.getClientRects().length > 0);
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:enabled, input:enabled, select:enabled, textarea:enabled, a[href], [tabindex]:not([tabindex="-1"])') ?? []).filter(element => element.getClientRects().length > 0);
 
     if (focusable.length === 0) {
       event.preventDefault();
@@ -74,57 +114,64 @@ const unsubscribe = api.context.subscribe(() => {
     }
   }
 
-function updateField<K extends keyof typeof form>(field: K, value: (typeof form)[K]) {
-  setForm(previous => ({ ...previous, [field]: value }));
-}
-
-function updateAddress<K extends keyof ContractorFormAddress>(field: K, value: ContractorFormAddress[K]) {
-  setForm(previous => ({ ...previous, addresses: previous.addresses.map((address, index) => index === 0 ? { ...address, [field]: value } : address) }));
-}
-
-async function saveContractor() {
-  if (savingRef.current) return;
-
-  setSaveError(null);
-
-  const validationError = validateContractorForm(form);
-  if (validationError) {
-    setSaveError(validationError);
-    return;
+  function updateField<K extends keyof typeof form>(field: K, value: (typeof form)[K]) {
+    setForm(previous => ({ ...previous, [field]: value }));
   }
 
-  const controller = new AbortController();
-  saveControllerRef.current = controller;
-  savingRef.current = true;
-  setSaving(true);
+  function updateAddress<K extends keyof ContractorFormAddress>(field: K, value: ContractorFormAddress[K]) {
+    setForm(previous => {
+      const current = previous.addresses[0] ?? { addressType: REGISTERED_OFFICE, countryCode: 'PL', street: '', buildingNumber: '', apartmentNumber: '', postalCode: '', city: '' };
+      return { ...previous, addresses: [{ ...current, [field]: value }] };
+    });
+  }
 
-  try {
-    const context = api.context.capture('tenant');
-    const request = toContractorRequest(form);
+  async function saveContractor() {
+    if (savingRef.current || blocked) return;
+    if (!api.context.isCurrent(openingContext)) { onClose(); return; }
 
-    api.context.assertCurrent(context);
-    await contractorClient.createContractor(request, controller.signal);
-    api.context.assertCurrent(context);
+    setSaveError(null);
 
-    if (!controller.signal.aborted) onSaved();
-  } catch (error: unknown) {
-    if (!controller.signal.aborted && !(error instanceof StaleContextError) && !(error instanceof Error && error.name === 'AbortError')) {
-      setSaveError(errorMessage(error));
+    const validationError = validateContractorForm(form);
+    if (validationError) {
+      setSaveError(validationError);
+      return;
     }
-  } finally {
-    if (saveControllerRef.current === controller) saveControllerRef.current = null;
-    savingRef.current = false;
-    if (!controller.signal.aborted) setSaving(false);
+
+    const controller = new AbortController();
+    saveControllerRef.current = controller;
+    savingRef.current = true;
+    setSaving(true);
+
+    try {
+      const request = toContractorRequest(form);
+
+      api.context.assertCurrent(openingContext);
+      if (contractorId) await contractorClient.updateContractor(contractorId, request, controller.signal);
+      else await contractorClient.createContractor(request, controller.signal);
+      api.context.assertCurrent(openingContext);
+
+      if (!controller.signal.aborted) onSaved();
+    } catch (error: unknown) {
+      if (!controller.signal.aborted && api.context.isCurrent(openingContext) && !(error instanceof StaleContextError) && !(error instanceof Error && error.name === 'AbortError')) {
+        setNotFound(error instanceof ApiError && error.status === 404);
+        setSaveError(failureMessage(error));
+      }
+    } finally {
+      if (saveControllerRef.current === controller) saveControllerRef.current = null;
+      savingRef.current = false;
+      if (!controller.signal.aborted) setSaving(false);
+    }
   }
-}
 
   return createPortal(
     <div className="contractor-dialog-overlay">
       <div ref={dialogRef} className="contractor-dialog" role="dialog" aria-modal="true" aria-labelledby="contractor-dialog-title" onKeyDown={handleKeyDown} tabIndex={-1}>
-        <h2 id="contractor-dialog-title">Nowy kontrahent</h2>
+        <h2 id="contractor-dialog-title">{contractorId ? 'Edycja kontrahenta' : 'Nowy kontrahent'}</h2>
 
 <div className="contractor-dialog-content">
-<div className="contractor-form">
+{loadStatus === 'loading' && <p role="status">Wczytywanie danych kontrahenta…</p>}
+{loadStatus === 'error' && <><p className="error-message" role="alert">{loadError}</p>{!notFound && <button className="secondary-button" disabled={session.verification !== 'idle'} onClick={() => setLoadRevision(value => value + 1)}>Spróbuj ponownie</button>}</>}
+{loadStatus === 'ready' && <fieldset className="contractor-form" disabled={blocked}>
   <h3 className="contractor-form-section">Dane kontrahenta</h3>
 
   <label className="contractor-form-full">
@@ -168,43 +215,44 @@ async function saveContractor() {
   </label>
 
   <h3 className="contractor-form-section">Adres siedziby</h3>
+  {!address && <p className="contractor-form-full">Brak adresu siedziby. Uzupełnienie pól doda adres przy zapisie.</p>}
 
   <label>
     Kraj
-    <input type="text" maxLength={2} value={form.addresses[0].countryCode} onChange={event => updateAddress('countryCode', event.target.value.toUpperCase())} />
+    <input type="text" maxLength={2} value={address?.countryCode ?? ''} onChange={event => updateAddress('countryCode', event.target.value.toUpperCase())} />
   </label>
 
   <label>
     Kod pocztowy
-    <input type="text" value={form.addresses[0].postalCode} onChange={event => updateAddress('postalCode', event.target.value)} />
+    <input type="text" value={address?.postalCode ?? ''} onChange={event => updateAddress('postalCode', event.target.value)} />
   </label>
 
   <label>
     Miejscowość
-    <input type="text" value={form.addresses[0].city} onChange={event => updateAddress('city', event.target.value)} />
+    <input type="text" value={address?.city ?? ''} onChange={event => updateAddress('city', event.target.value)} />
   </label>
 
   <label>
     Ulica
-    <input type="text" value={form.addresses[0].street} onChange={event => updateAddress('street', event.target.value)} />
+    <input type="text" value={address?.street ?? ''} onChange={event => updateAddress('street', event.target.value)} />
   </label>
 
   <label>
     Numer budynku
-    <input type="text" value={form.addresses[0].buildingNumber} onChange={event => updateAddress('buildingNumber', event.target.value)} />
+    <input type="text" value={address?.buildingNumber ?? ''} onChange={event => updateAddress('buildingNumber', event.target.value)} />
   </label>
 
   <label>
     Numer lokalu
-    <input type="text" value={form.addresses[0].apartmentNumber} onChange={event => updateAddress('apartmentNumber', event.target.value)} />
+    <input type="text" value={address?.apartmentNumber ?? ''} onChange={event => updateAddress('apartmentNumber', event.target.value)} />
   </label>
-</div>
+</fieldset>}
 </div>
 
 <div className="contractor-form-actions">
 {saveError && <p className="error-message" role="alert">{saveError}</p>}
 <button ref={closeButtonRef} className="secondary-button" type="button" onClick={onClose}>Anuluj</button>
-<button className="secondary-button" type="button" disabled={saving} onClick={() => void saveContractor()}>{saving ? 'Zapisywanie…' : 'Zapisz'}</button>
+<button className="secondary-button" type="button" disabled={blocked} onClick={() => void saveContractor()}>{saving ? 'Zapisywanie…' : 'Zapisz'}</button>
 </div>
       </div>
     </div>,

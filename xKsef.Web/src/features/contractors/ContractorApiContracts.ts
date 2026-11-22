@@ -82,7 +82,7 @@ function readAddress(value: unknown): GusAddressDto {
   };
 }
 
-function readContractor(value: unknown): GusContractorDto {
+function readGusContractor(value: unknown): GusContractorDto {
   const row = record(value);
   const regon = text(row.regon);
   const fullName = text(row.fullName);
@@ -101,7 +101,7 @@ function readContractor(value: unknown): GusContractorDto {
 
 export function readGusContractors(value: unknown): readonly GusContractorDto[] {
   if (!Array.isArray(value)) return invalid();
-  return value.map(readContractor);
+  return value.map(readGusContractor);
 }
 
 const invalidContractors = (): never => invalid('Nieprawidłowa odpowiedź API kontrahentów.');
@@ -141,7 +141,7 @@ function readContractorAddress(value: unknown): ContractorAddressDto {
   };
 }
 
-function readStoredContractor(value: unknown): ContractorDto {
+export function readContractor(value: unknown): ContractorDto {
   const row = contractorRecord(value);
 
   if (!Array.isArray(row.addresses)) return invalidContractors();
@@ -170,7 +170,7 @@ function readStoredContractor(value: unknown): ContractorDto {
 
 export function readContractors(value: unknown): readonly ContractorDto[] {
   if (!Array.isArray(value)) return invalidContractors();
-  return value.map(readStoredContractor);
+  return value.map(readContractor);
 }
 
 export interface ContractorRequest {

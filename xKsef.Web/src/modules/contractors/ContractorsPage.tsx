@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSession } from '../../platform/session/SessionProvider';
 import { ContractorApiClient } from '../../features/contractors/ContractorApiClient';
 import type { ContractorDto } from '../../features/contractors/ContractorApiContracts';
 import { errorMessage } from '../../platform/api/ApiError';
 import { StaleContextError } from '../../platform/session/RequestContext';
+import type { RequestSnapshot } from '../../platform/session/RequestContext';
 import { ContractorTable } from '../../features/contractors/ContractorTable';
-import { useCallback } from 'react';
 import { ContractorDialog } from '../../features/contractors/ContractorDialog';
 
 export function ContractorsPage() {
@@ -15,9 +15,10 @@ export function ContractorsPage() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const [dialogOpen, setDialogOpen] = useState(false);
-const closeDialog = useCallback(() => setDialogOpen(false), []);
-const [tableRevision, setTableRevision] = useState(0);
+  const [dialog, setDialog] = useState<{ contractorId?: string; context: RequestSnapshot } | null>(null);
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const saved = useCallback(() => { setDialog(null); setRevision(value => value + 1); }, []);
+  const [tableRevision, setTableRevision] = useState(0);
 
   useEffect(() => {
     if (!session.activeTenantId) {
@@ -28,7 +29,6 @@ const [tableRevision, setTableRevision] = useState(0);
     let current = true;
 
     async function load() {
-      setContractors([]);
       setStatus('loading');
       setError(null);
 
@@ -64,19 +64,19 @@ const [tableRevision, setTableRevision] = useState(0);
       <button className="secondary-button" disabled={status === 'loading'} onClick={() => setRevision(value => value + 1)}>
         {status === 'error' ? 'Spróbuj ponownie' : 'Odśwież listę'}
       </button>
-      <button className="secondary-button" type="button" onClick={() => setDialogOpen(true)}>Nowy kontrahent</button>
+      <button className="secondary-button" type="button" disabled={session.verification !== 'idle'} onClick={() => setDialog({ context: api.context.capture('tenant') })}>Nowy kontrahent</button>
     </div>
 
     {status === 'loading' && <p role="status">Wczytywanie kontrahentów…</p>}
     {status === 'error' && <p className="error-message" role="alert">{error}</p>}
     {status === 'ready' && contractors.length === 0 && <p>Brak kontrahentów w kartotece.</p>}
-    {status === 'ready' && contractors.length > 0 && (
-  <ContractorTable
-    key={`${session.activeTenantId}:${tableRevision}`}
-    contractors={contractors}
-    onReset={() => setTableRevision(value => value + 1)}
-  />
-)}
-{dialogOpen && <ContractorDialog onClose={closeDialog} onSaved={() => { closeDialog(); setRevision(value => value + 1); }} />}
+    <ContractorTable
+      key={`${session.activeTenantId}:${tableRevision}`}
+      contractors={contractors}
+      onReset={() => setTableRevision(value => value + 1)}
+      busy={status !== 'ready' || session.verification !== 'idle'}
+      onEdit={contractor => setDialog({ contractorId: contractor.id, context: api.context.capture('tenant') })}
+    />
+    {dialog && <ContractorDialog key={dialog.contractorId ?? 'new'} contractorId={dialog.contractorId} openingContext={dialog.context} onClose={closeDialog} onSaved={saved} />}
   </main>;
 }

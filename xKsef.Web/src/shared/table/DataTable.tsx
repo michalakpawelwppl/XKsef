@@ -37,9 +37,10 @@ export interface DataTableProps<T> {
   readonly onFilteredRowsChange?: (rows: readonly T[]) => void;
     readonly onResetFilters?: () => void;
     readonly onRowDoubleClick?: (row: T) => void;
+    readonly rowDoubleClickTitle?: string;
 }
 
-export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', onSelectionChange, onVisibleCountChange, onFilteredRowsChange, onResetFilters, onRowDoubleClick }: DataTableProps<T>) {
+export function DataTable<T>({ rows, columns, getRowId, label, searchText = '', onSelectionChange, onVisibleCountChange, onFilteredRowsChange, onResetFilters, onRowDoubleClick, rowDoubleClickTitle = 'Kliknij dwukrotnie, aby wyświetlić podgląd faktury.' }: DataTableProps<T>) {
   const resolveRowId = useCallback((params: GetRowIdParams<T>) => getRowId(params.data), [getRowId]);
   const rowData = useMemo(() => Array.from(rows), [rows]);
   const columnDefs = useMemo(() => toGridColumns(columns), [columns]);
@@ -106,7 +107,7 @@ useEffect(() => {
   const cell = event.event?.target;
   if (!(cell instanceof HTMLElement)) return;
   const cellElement = cell.closest<HTMLElement>('.ag-cell');
-  if (cellElement) cellElement.title = 'Kliknij dwukrotnie, aby wyświetlić podgląd faktury.';
+  if (cellElement) cellElement.title = rowDoubleClickTitle;
 }}
 
 onCellClicked={event => {

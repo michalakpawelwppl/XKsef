@@ -1,10 +1,27 @@
 
 import type { ApiClient } from '../../platform/api/ApiClient';
-import { readContractors, readGusContractors } from './ContractorApiContracts';
+import { readContractor, readContractors, readGusContractors } from './ContractorApiContracts';
 import type { ContractorDto, ContractorRequest, GusContractorDto, GusIdentifierType } from './ContractorApiContracts';
 
 export class ContractorApiClient {
   constructor(private readonly api: ApiClient) {}
+
+  async getContractor(id: string, signal?: AbortSignal): Promise<ContractorDto> {
+    signal?.throwIfAborted();
+    const context = this.api.context.capture('tenant');
+    const response = await this.api.request<unknown>(`/api/contractors/${encodeURIComponent(id)}`, { scope: 'tenant', signal });
+    signal?.throwIfAborted();
+    this.api.context.assertCurrent(context);
+    return readContractor(response);
+  }
+
+  async updateContractor(id: string, request: ContractorRequest, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const context = this.api.context.capture('tenant');
+    await this.api.request<unknown>(`/api/contractors/${encodeURIComponent(id)}`, { method: 'PUT', body: request, scope: 'tenant', signal });
+    signal?.throwIfAborted();
+    this.api.context.assertCurrent(context);
+  }
 
   async getFromGus(identifierType: GusIdentifierType, identifier: string, signal?: AbortSignal): Promise<readonly GusContractorDto[]> {
     if (!identifier.trim()) throw new Error('Podaj NIP, REGON lub KRS.');
