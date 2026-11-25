@@ -10,9 +10,9 @@ public class KsefEnvironmentResolverTests
 {
     [Theory]
     [InlineData("TEST", "https://api-test.ksef.mf.gov.pl")]
-    [InlineData("PROD", "https://api.ksef.mf.gov.pl")]
+    [InlineData("PROD", "https://api.ksef-prod.mf.gov.pl")]
     [InlineData(" test ", "https://api-test.ksef.mf.gov.pl")]
-    [InlineData(" prod ", "https://api.ksef.mf.gov.pl")]
+    [InlineData(" prod ", "https://api.ksef-prod.mf.gov.pl")]
     public void ResolveBaseUrl_UsesSelectedEnvironment(string environment, string expectedBaseUrl)
     {
         IConfiguration configuration = CreateConfiguration(environment);
@@ -38,9 +38,9 @@ public class KsefEnvironmentResolverTests
 
     [Theory]
     [InlineData("TEST", "https://api-test.ksef.mf.gov.pl")]
-    [InlineData("PROD", "https://api.ksef.mf.gov.pl")]
+    [InlineData("PROD", "https://api.ksef-prod.mf.gov.pl")]
     [InlineData("TEST", "https://api-test.ksef.mf.gov.pl/")]
-    [InlineData("PROD", " https://API.KSEF.MF.GOV.PL/ ")]
+    [InlineData("PROD", " https://api.ksef-prod.mf.gov.pl/ ")]
     public void ResolveBaseUrl_AcceptsMatchingBaseUrlAndReturnsCanonicalAddress(string environment, string baseUrl)
     {
         IConfiguration configuration = CreateConfiguration(environment, baseUrl);
@@ -49,7 +49,7 @@ public class KsefEnvironmentResolverTests
     }
 
     [Theory]
-    [InlineData("TEST", "https://api.ksef.mf.gov.pl")]
+    [InlineData("TEST", "https://api.ksef-prod.mf.gov.pl")]
     [InlineData("PROD", "https://api-test.ksef.mf.gov.pl")]
     [InlineData("TEST", "https://example.com")]
     [InlineData("TEST", "http://api-test.ksef.mf.gov.pl")]
@@ -84,7 +84,7 @@ public class KsefEnvironmentResolverTests
 
     [Theory]
     [InlineData("TEST", "https://api-test.ksef.mf.gov.pl")]
-    [InlineData("PROD", "https://api.ksef.mf.gov.pl")]
+    [InlineData("PROD", "https://api.ksef-prod.mf.gov.pl")]
     public void AddKsefInfrastructure_ExposesResolvedAddressInOptions(string environment, string expectedBaseUrl)
     {
         IConfiguration configuration = CreateConfiguration(environment);
@@ -101,7 +101,7 @@ public class KsefEnvironmentResolverTests
     [Theory]
     [InlineData(null, null)]
     [InlineData("DEMO", null)]
-    [InlineData("TEST", "https://api.ksef.mf.gov.pl")]
+    [InlineData("TEST", "https://api.ksef-prod.mf.gov.pl")]
     [InlineData("PROD", "https://api-test.ksef.mf.gov.pl")]
     public void AddKsefInfrastructure_RejectsInvalidConfigurationDuringRegistration(string? environment, string? baseUrl)
     {
@@ -125,7 +125,7 @@ public class KsefEnvironmentResolverTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Ksef:Environment"] = "PROD" })
             .Build();
 
-        Assert.Equal("https://api.ksef.mf.gov.pl", KsefEnvironmentResolver.ResolveBaseUrl(configuration));
+        Assert.Equal("https://api.ksef-prod.mf.gov.pl", KsefEnvironmentResolver.ResolveBaseUrl(configuration));
     }
 
     [Fact]

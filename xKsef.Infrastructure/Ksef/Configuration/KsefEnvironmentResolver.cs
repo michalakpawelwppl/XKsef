@@ -7,7 +7,7 @@ internal static class KsefEnvironmentResolver
     public static string GetEnvironment(string resolvedBaseUrl) => resolvedBaseUrl switch
     {
         "https://api-test.ksef.mf.gov.pl" => "TEST",
-        "https://api.ksef.mf.gov.pl" => "PROD",
+        "https://api.ksef-prod.mf.gov.pl" => "PROD",
         _ => throw new InvalidOperationException("Nieprawidłowy zwalidowany adres KSeF.")
     };
 
@@ -16,7 +16,7 @@ internal static class KsefEnvironmentResolver
         string baseUrl = configuration["Ksef:Environment"]?.Trim().ToUpperInvariant() switch
         {
             "TEST" => "https://api-test.ksef.mf.gov.pl",
-            "PROD" => "https://api.ksef.mf.gov.pl",
+            "PROD" => "https://api.ksef-prod.mf.gov.pl",
             _ => throw new InvalidOperationException("Nieprawidłowa konfiguracja Ksef:Environment. Wymagana wartość TEST lub PROD.")
         };
 

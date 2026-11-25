@@ -355,7 +355,7 @@ public sealed class CredentialServiceEnvironmentTests
         var services = new ServiceCollection();
         services.AddKsefInfrastructure(configuration);
         configuration["Ksef:Environment"] = "PROD";
-        configuration["Ksef:BaseUrl"] = "https://api.ksef.mf.gov.pl";
+        configuration["Ksef:BaseUrl"] = "https://api.ksef-prod.mf.gov.pl";
         using var provider = services.BuildServiceProvider();
         using var handler = provider.GetRequiredService<CredentialServiceEnvironmentHandler>();
         handler.InnerHandler = new StubHandler((request, _) =>
@@ -380,7 +380,7 @@ public sealed class CredentialServiceEnvironmentTests
 
     internal static HttpClient CreateHttp(string environment, HttpMessageHandler transport, TimeSpan? timeout = null)
     {
-        var options = Options.Create(new KsefOptions { Environment = "DEMO", BaseUrl = environment == "TEST" ? "https://api-test.ksef.mf.gov.pl" : "https://api.ksef.mf.gov.pl" });
+        var options = Options.Create(new KsefOptions { Environment = "DEMO", BaseUrl = environment == "TEST" ? "https://api-test.ksef.mf.gov.pl" : "https://api.ksef-prod.mf.gov.pl" });
         var handler = new CredentialServiceEnvironmentHandler(options, timeout ?? TimeSpan.FromSeconds(100)) { InnerHandler = transport };
         return new HttpClient(handler) { BaseAddress = new Uri("https://credential.test/"), Timeout = Timeout.InfiniteTimeSpan };
     }
