@@ -173,7 +173,7 @@ public sealed class RegistrationSqlServerTests
                 using var scope = api.Host.Services.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 Assert.True(db.Database.IsSqlServer());
-                Assert.Equal(new[] { "20261114111612_InitialCreate", "20261114114432_AddUniqueNormalizedEmail", "20261114142313_AddBrowserSessions", "20261119181911_AddContractorsCatalog", "20261121100931_ExpandContractorsCatalog", "20261121120514_AddGusCallPermits" }, await db.Database.GetAppliedMigrationsAsync());
+                Assert.Equal(new[] { "20261114111612_InitialCreate", "20261114114432_AddUniqueNormalizedEmail", "20261114142313_AddBrowserSessions", "20261119181911_AddContractorsCatalog", "20261121100931_ExpandContractorsCatalog", "20261121120514_AddGusCallPermits", "20261127075952_AddSalesInvoiceDrafts" }, await db.Database.GetAppliedMigrationsAsync());
                 Assert.False(await db.Users.AnyAsync(user => user.UserName != null && user.UserName.StartsWith(api.Prefix)));
                 return api;
             }

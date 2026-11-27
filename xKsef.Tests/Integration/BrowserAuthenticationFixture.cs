@@ -95,7 +95,7 @@ public sealed partial class BrowserAuthenticationTests
                     services.AddApiAuthentication(Configuration, context.HostingEnvironment);
                     services.AddRegistrationRateLimiting();
                     services.AddRateLimiter(options => { options.RejectionStatusCode = 429; options.AddFixedWindowLimiter("login", limiter => { limiter.PermitLimit = 5; limiter.Window = TimeSpan.FromMinutes(1); limiter.QueueLimit = 0; }); });
-                    services.AddExceptionHandler<BrowserSessionExceptionHandler>(); services.AddExceptionHandler<GusExceptionHandler>(); services.AddProblemDetails();
+                    services.AddExceptionHandler<BrowserSessionExceptionHandler>(); services.AddExceptionHandler<GusExceptionHandler>(); services.AddExceptionHandler<SalesInvoiceExceptionHandler>(); services.AddProblemDetails();
                     services.AddHttpClient("CredentialService").ConfigurePrimaryHttpMessageHandler(() => new RejectExternalCalls());
                     services.AddScoped<ICredentialServiceClient, CredentialServiceClient>();
                 }).Configure(app =>
@@ -128,6 +128,7 @@ public sealed partial class BrowserAuthenticationTests
                 {
                     using var scope = Scope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     await db.Invoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
+                    await db.SalesInvoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
                     var contractors = db.Contractors.Where(row => _tenants.Contains(row.TenantId));
                     var contractorData = db.ContractorsData.Where(row => contractors.Any(contractor => contractor.Id == row.ContractorId));
                     var addresses = db.Addresses.Where(row => contractorData.Any(data => data.Id == row.ContractorsDataId));

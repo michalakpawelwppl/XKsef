@@ -7,6 +7,7 @@ using xKsef.Domain.Tenants;
 using xKsef.Infrastructure.Authentication;
 using xKsef.Infrastructure.Identity;
 using xKsef.Infrastructure.Gus;
+using xKsef.Domain.SalesInvoices;
 
 namespace xKsef.Infrastructure.Persistence;
 
@@ -20,6 +21,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<GusCallPermitEntry> GusCallPermits => Set<GusCallPermitEntry>();
 
     public DbSet<StoredInvoice> Invoices => Set<StoredInvoice>();
+    public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<UserTenant> UserTenants => Set<UserTenant>();
     public DbSet<TaxEntity> TaxEntities => Set<TaxEntity>();
@@ -35,5 +37,10 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+        if (Database.IsSqlServer())
+        {
+            foreach (var entity in new[] { typeof(SalesInvoicePartySnapshot), typeof(SalesInvoiceDetails) })
+                modelBuilder.Entity(entity).ToTable(table => table.HasCheckConstraint("CK_" + entity.Name + "_Json", "ISJSON([Data]) = 1"));
+        }
     }
 }

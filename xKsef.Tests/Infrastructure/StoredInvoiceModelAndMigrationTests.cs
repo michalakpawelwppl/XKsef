@@ -122,16 +122,17 @@ public sealed class StoredInvoiceModelAndMigrationTests
     {
         using var context = CreateContext();
         var migrations = context.GetService<IMigrationsAssembly>().Migrations.Keys.OrderBy(id => id).ToArray();
-        Assert.Equal(6, migrations.Length);
+        Assert.Equal(7, migrations.Length);
         Assert.EndsWith("_InitialCreate", migrations[0]);
         Assert.EndsWith("_AddUniqueNormalizedEmail", migrations[1]);
         Assert.EndsWith("_AddBrowserSessions", migrations[2]);
         Assert.EndsWith("_AddContractorsCatalog", migrations[3]);
         Assert.EndsWith("_ExpandContractorsCatalog", migrations[4]);
         Assert.EndsWith("_AddGusCallPermits", migrations[5]);
+        Assert.EndsWith("_AddSalesInvoiceDrafts", migrations[6]);
         var current = context.GetService<IDesignTimeModel>().Model;
         var operations = context.GetService<IMigrationsModelDiffer>().GetDifferences(null, current.GetRelationalModel());
-        Assert.Equal(19, operations.OfType<CreateTableOperation>().Count());
+        Assert.Equal(26, operations.OfType<CreateTableOperation>().Count());
         Assert.All(operations, operation => Assert.True(operation is CreateTableOperation or CreateIndexOperation or EnsureSchemaOperation));
     }
 
@@ -140,7 +141,7 @@ public sealed class StoredInvoiceModelAndMigrationTests
     {
         using var context = CreateContext();
         var current = context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
-        var target = InitializeModel(context, new AddGusCallPermits().TargetModel);
+        var target = InitializeModel(context, new AddSalesInvoiceDrafts().TargetModel);
         var snapshot = InitializeModel(context, new AppDbContextModelSnapshot().Model);
         var differ = context.GetService<IMigrationsModelDiffer>();
 

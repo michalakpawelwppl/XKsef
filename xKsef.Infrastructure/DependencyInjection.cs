@@ -105,6 +105,9 @@ public static class DependencyInjection
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
         services.AddScoped<IContractorRepository, ContractorRepository>();
         services.AddScoped<IContractorService, ContractorService>();
+        services.AddSingleton<xKsef.Domain.SalesInvoices.Calculation.SalesInvoiceCalculator>();
+        services.AddScoped<xKsef.Application.SalesInvoices.ISalesInvoiceRepository, SalesInvoiceRepository>();
+        services.AddScoped<xKsef.Application.SalesInvoices.ISalesInvoiceService, xKsef.Application.SalesInvoices.SalesInvoiceService>();
         services.AddScoped<IInvoiceQueryService, InvoiceQueryService>();
         services.AddScoped<InvoiceImportService>();
         services.AddScoped<IInvoiceImportTransaction, InvoiceImportTransaction>();
