@@ -244,10 +244,6 @@ public sealed class RegistrationTests
         {
             var api = new RegistrationApi();
             await api._connection.OpenAsync();
-            // Test-only equivalents for the new SQL Server session table's collation and binary CHECK.
-            api._connection.CreateCollation("Latin1_General_100_BIN2", (left, right) => string.Compare(left, right, StringComparison.Ordinal));
-            api._connection.CreateFunction<byte[], int>("DATALENGTH", data => data.Length);
-            api._connection.CreateFunction<string, int>("LEN", value => value.TrimEnd(' ').Length);
             var key = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -275,9 +271,7 @@ public sealed class RegistrationTests
             api.Client = api.Host.GetTestClient();
             using var scope = api.Host.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            // The production XML mapping names a SQL Server binary type; SQLite's equivalent is BLOB.
-            string schema = db.Database.GenerateCreateScript().Replace("varbinary(max)", "BLOB", StringComparison.Ordinal);
-            await db.Database.ExecuteSqlRawAsync(schema);
+            await SqliteTestSchema.CreateAsync(db, api._connection);
             return api;
         }
         public Task<HttpResponseMessage> RegisterAsync(string login, string email, string password = Password) => Client.PostAsJsonAsync("/api/auth/register", new RegisterRequest { Login = login, Email = email, Password = password });

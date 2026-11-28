@@ -277,8 +277,8 @@ public sealed class SalesInvoiceDetails
     public Guid TenantId { get; private set; }
     public Guid SalesInvoiceId { get; private set; }
     public SalesInvoiceDetailsData Data { get; private set; } = new();
-    internal void Replace(SalesInvoiceDetailsData data) => Data = data with { Settlement = data.Settlement?.Freeze(), PaymentTerms = Array.AsReadOnly(data.PaymentTerms.ToArray()), BankAccounts = Array.AsReadOnly(data.BankAccounts.ToArray()), FactorBankAccounts = Array.AsReadOnly(data.FactorBankAccounts.ToArray()), AdditionalDescriptions = Array.AsReadOnly(data.AdditionalDescriptions.ToArray()) };
-    public SalesInvoiceDetailsData Snapshot() => Data with { Settlement = Data.Settlement?.Copy(), PaymentTerms = Data.PaymentTerms.ToArray(), BankAccounts = Data.BankAccounts.ToArray(), FactorBankAccounts = Data.FactorBankAccounts.ToArray(), AdditionalDescriptions = Data.AdditionalDescriptions.ToArray() };
+    internal void Replace(SalesInvoiceDetailsData data) => Data = data with { PartialPayments = Array.AsReadOnly(data.PartialPayments.ToArray()), Settlement = data.Settlement?.Freeze(), PaymentTerms = Array.AsReadOnly(data.PaymentTerms.ToArray()), BankAccounts = Array.AsReadOnly(data.BankAccounts.ToArray()), FactorBankAccounts = Array.AsReadOnly(data.FactorBankAccounts.ToArray()), AdditionalDescriptions = Array.AsReadOnly(data.AdditionalDescriptions.ToArray()) };
+    public SalesInvoiceDetailsData Snapshot() => Data with { PartialPayments = Data.PartialPayments.ToArray(), Settlement = Data.Settlement?.Copy(), PaymentTerms = Data.PaymentTerms.ToArray(), BankAccounts = Data.BankAccounts.ToArray(), FactorBankAccounts = Data.FactorBankAccounts.ToArray(), AdditionalDescriptions = Data.AdditionalDescriptions.ToArray() };
 }
 
 // Reserved relationship model: no correction/advance issuing operations are exposed in stage 1.

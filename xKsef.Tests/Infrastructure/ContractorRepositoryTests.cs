@@ -213,12 +213,8 @@ internal sealed class ContractorTestStore : IAsyncDisposable
     {
         var store = new ContractorTestStore();
         await store._connection.OpenAsync();
-        store._connection.CreateCollation("Latin1_General_100_BIN2", (left, right) => string.Compare(left, right, StringComparison.Ordinal));
-        store._connection.CreateFunction<byte[], int>("DATALENGTH", value => value.Length);
-        store._connection.CreateFunction<string, int>("LEN", value => value.TrimEnd(' ').Length);
         store.Context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(store._connection).AddInterceptors(store.Sql).Options);
-        var schema = store.Context.Database.GenerateCreateScript().Replace("varbinary(max)", "BLOB", StringComparison.Ordinal);
-        await store.Context.Database.ExecuteSqlRawAsync(schema);
+        await SqliteTestSchema.CreateAsync(store.Context, store._connection);
         var taxEntity = new TaxEntity { Id = Guid.NewGuid(), Name = "Podmiot testowy", Nip = "8567346215" };
         store.Context.TaxEntities.Add(taxEntity);
         store.Context.Tenants.AddRange(new Tenant { Id = store.TenantA, Name = "A", TaxEntityId = taxEntity.Id }, new Tenant { Id = store.TenantB, Name = "B", TaxEntityId = taxEntity.Id });

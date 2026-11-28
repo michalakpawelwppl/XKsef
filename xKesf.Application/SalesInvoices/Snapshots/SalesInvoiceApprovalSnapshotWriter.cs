@@ -42,6 +42,8 @@ public static class ApprovedSalesInvoiceComparison
         // Keep the reader's null (unknown/not captured) intact; never hide an actual factor account change.
         if (document.Input?.Details?.FactorBankAccounts is null && currentInput.Details?.FactorBankAccounts is { Count: 0 })
             currentInput = currentInput with { Details = currentInput.Details with { FactorBankAccounts = null } };
+        if (document.Input?.Details?.PartialPayments is null && currentInput.Details?.PartialPayments is { Count: 0 })
+            currentInput = currentInput with { Details = currentInput.Details with { PartialPayments = null } };
         return document.CalculatorVersion == invoice.CalculationVersion
             && SalesInvoiceSnapshotJson.Same(document.Input, currentInput)
             && SalesInvoiceSnapshotJson.Same(persisted, SalesInvoiceSnapshotCapture.Calculations(invoice));

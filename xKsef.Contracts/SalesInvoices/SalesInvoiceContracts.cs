@@ -97,11 +97,17 @@ public sealed record ExchangeRateDto
     public string? OverrideReason { get; init; }
     public Guid? OriginalSnapshotId { get; init; }
 }
-public sealed record PaymentTermDto(DateOnly? DueDate, int? Quantity = null, string? Unit = null, string? StartingEvent = null);
+public sealed record PaymentTermDto(DateOnly? DueDate, [property: JsonConverter(typeof(PaymentTermQuantityConverter))] System.Numerics.BigInteger? Quantity = null, string? Unit = null, string? StartingEvent = null);
 public sealed record BankAccountDto(string Number, string? Swift = null, string? BankName = null, string? Description = null, int? BankOwnAccountType = null);
 public sealed record AdditionalDescriptionDto(string Key, string Value, Guid? LineId = null);
 public sealed record SalesInvoiceDetailsDto
 {
+    public int? PaymentStatus { get; init; }
+    public DateOnly? PaymentDate { get; init; }
+    public IReadOnlyList<PartialPaymentDto> PartialPayments { get; init; } = [];
+    public CashDiscountDto? CashDiscount { get; init; }
+    public string? PaymentLink { get; init; }
+    public string? KsefPaymentId { get; init; }
     public InvoiceSettlementDto? Settlement { get; init; }
     public int Version { get; init; } = 1;
     public int? PaymentMethod { get; init; }

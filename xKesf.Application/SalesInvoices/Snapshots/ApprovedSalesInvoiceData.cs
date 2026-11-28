@@ -96,11 +96,19 @@ public sealed record ApprovedExchangeRate
     public string? OverrideReason { get; init; }
     public Guid? OriginalSnapshotId { get; init; }
 }
-public sealed record ApprovedPaymentTerm(DateOnly? DueDate, int? Quantity = null, string? Unit = null, string? StartingEvent = null);
+public sealed record ApprovedPaymentTerm(DateOnly? DueDate, [property: JsonConverter(typeof(xKsef.Domain.SalesInvoices.InvoicePaymentTermQuantityConverter))] System.Numerics.BigInteger? Quantity = null, string? Unit = null, string? StartingEvent = null);
+public sealed record ApprovedPartialPayment(SnapshotDecimal? Amount = null, DateOnly? PaymentDate = null, int? PaymentMethod = null, string? OtherPaymentDescription = null);
+public sealed record ApprovedCashDiscount(string? Conditions = null, string? AmountDescription = null);
 public sealed record ApprovedBankAccount(string? Number, string? Swift = null, string? BankName = null, string? Description = null, int? BankOwnAccountType = null);
 public sealed record ApprovedAdditionalDescription(string? Key, string? Value, Guid? LineId = null);
 public sealed record ApprovedSalesInvoiceDetails
 {
+    public int? PaymentStatus { get; init; }
+    public DateOnly? PaymentDate { get; init; }
+    public IReadOnlyList<ApprovedPartialPayment>? PartialPayments { get; init; }
+    public ApprovedCashDiscount? CashDiscount { get; init; }
+    public string? PaymentLink { get; init; }
+    public string? KsefPaymentId { get; init; }
     public ApprovedInvoiceSettlement? Settlement { get; init; }
     public int? Version { get; init; }
     public int? PaymentMethod { get; init; }

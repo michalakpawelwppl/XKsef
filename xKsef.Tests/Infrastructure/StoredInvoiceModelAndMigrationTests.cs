@@ -122,18 +122,45 @@ public sealed class StoredInvoiceModelAndMigrationTests
     {
         using var context = CreateContext();
         var migrations = context.GetService<IMigrationsAssembly>().Migrations.Keys.OrderBy(id => id).ToArray();
-        Assert.Equal(7, migrations.Length);
-        Assert.EndsWith("_InitialCreate", migrations[0]);
-        Assert.EndsWith("_AddUniqueNormalizedEmail", migrations[1]);
-        Assert.EndsWith("_AddBrowserSessions", migrations[2]);
-        Assert.EndsWith("_AddContractorsCatalog", migrations[3]);
-        Assert.EndsWith("_ExpandContractorsCatalog", migrations[4]);
-        Assert.EndsWith("_AddGusCallPermits", migrations[5]);
-        Assert.EndsWith("_AddSalesInvoiceDrafts", migrations[6]);
+        Assert.Equal(new[]
+        {
+            "20261114111612_InitialCreate", "20261114114432_AddUniqueNormalizedEmail", "20261114142313_AddBrowserSessions",
+            "20261119181911_AddContractorsCatalog", "20261121100931_ExpandContractorsCatalog", "20261121120514_AddGusCallPermits",
+            "20261127075952_AddSalesInvoiceDrafts", "20261127195022_AddSalesInvoiceApprovals", "20261127200653_AddInvoiceNumberSeries",
+            "20261127203409_AddInvoiceNumberReservations", "20261128084146_AddBasicSalesInvoiceFa3Data", "20261128091012_AddFourVatCalculationMethods",
+            "20261128094943_EnableSalesInvoiceApprovalSnapshotV2", "20261128151346_SimplifySalesInvoiceApprovalSnapshots", "20261128162009_AddSalesInvoiceSettlement"
+        }, migrations);
         var current = context.GetService<IDesignTimeModel>().Model;
         var operations = context.GetService<IMigrationsModelDiffer>().GetDifferences(null, current.GetRelationalModel());
-        Assert.Equal(26, operations.OfType<CreateTableOperation>().Count());
-        Assert.All(operations, operation => Assert.True(operation is CreateTableOperation or CreateIndexOperation or EnsureSchemaOperation));
+        Assert.Equal(new[]
+        {
+            "Addresses", "AddressesData", "AspNetRoleClaims", "AspNetRoles", "AspNetUserClaims", "AspNetUserLogins", "AspNetUserRoles", "AspNetUserTokens", "AspNetUsers",
+            "BrowserSessions", "Contractors", "ContractorsData", "GusCallPermits", "InvoiceNumberCounters", "InvoiceNumberReservations", "InvoiceNumberSeries",
+            "InvoiceNumberSeriesDefaults", "InvoiceNumberSeriesHistory", "KsefAuthenticationContexts", "KsefCredentials", "SalesInvoiceApprovals", "SalesInvoiceDetails",
+            "SalesInvoiceExchangeRates", "SalesInvoiceLines", "SalesInvoiceParticipants", "SalesInvoiceParties", "SalesInvoiceReferences", "SalesInvoiceTaxSummaries",
+            "SalesInvoices", "TaxEntities", "Tenants", "UserTenants", "invoices"
+        }.OrderBy(name => name, StringComparer.Ordinal), operations.OfType<CreateTableOperation>().Select(table => table.Name).OrderBy(name => name, StringComparer.Ordinal));
+        Assert.All(operations, operation => Assert.True(operation is CreateTableOperation or CreateIndexOperation or EnsureSchemaOperation or AddForeignKeyOperation));
+        // Number reservations introduce cyclic relationships. EF emits their FKs after the tables exist.
+        // Check every FK against the model rather than accepting arbitrary deferred DDL.
+        var modelForeignKeys = current.GetRelationalModel().Tables.SelectMany(table => table.ForeignKeyConstraints).ToDictionary(key => key.Name, StringComparer.Ordinal);
+        var generatedForeignKeys = operations.OfType<CreateTableOperation>().SelectMany(table => table.ForeignKeys).Concat(operations.OfType<AddForeignKeyOperation>()).ToArray();
+        Assert.Equal(modelForeignKeys.Keys.OrderBy(name => name, StringComparer.Ordinal), generatedForeignKeys.Select(key => key.Name).OrderBy(name => name, StringComparer.Ordinal));
+        foreach (var key in generatedForeignKeys)
+        {
+            var expected = modelForeignKeys[key.Name];
+            Assert.Equal(expected.Table.Name, key.Table); Assert.Equal(expected.Table.Schema, key.Schema);
+            Assert.Equal(expected.PrincipalTable.Name, key.PrincipalTable); Assert.Equal(expected.PrincipalTable.Schema, key.PrincipalSchema);
+            Assert.Equal(expected.Columns.Select(column => column.Name), key.Columns);
+            Assert.Equal(expected.PrincipalColumns.Select(column => column.Name), key.PrincipalColumns);
+            Assert.Equal(expected.OnDeleteAction, key.OnDelete);
+        }
+        var orderedOperations = operations.ToList();
+        foreach (var key in operations.OfType<AddForeignKeyOperation>())
+        {
+            Assert.True(orderedOperations.FindIndex(operation => operation is CreateTableOperation table && table.Name == key.Table && table.Schema == key.Schema) < orderedOperations.IndexOf(key));
+            Assert.True(orderedOperations.FindIndex(operation => operation is CreateTableOperation table && table.Name == key.PrincipalTable && table.Schema == key.PrincipalSchema) < orderedOperations.IndexOf(key));
+        }
     }
 
     [Fact]
@@ -141,7 +168,9 @@ public sealed class StoredInvoiceModelAndMigrationTests
     {
         using var context = CreateContext();
         var current = context.GetService<IDesignTimeModel>().Model.GetRelationalModel();
-        var target = InitializeModel(context, new AddSalesInvoiceDrafts().TargetModel);
+        var assembly = context.GetService<IMigrationsAssembly>();
+        var latest = assembly.Migrations.OrderBy(x => x.Key, StringComparer.Ordinal).Last();
+        var target = InitializeModel(context, assembly.CreateMigration(latest.Value, context.Database.ProviderName!).TargetModel);
         var snapshot = InitializeModel(context, new AppDbContextModelSnapshot().Model);
         var differ = context.GetService<IMigrationsModelDiffer>();
 

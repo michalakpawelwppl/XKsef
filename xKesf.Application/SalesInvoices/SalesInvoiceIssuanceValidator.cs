@@ -29,6 +29,7 @@ public sealed class SalesInvoiceIssuanceValidator(SalesInvoiceCalculator calcula
             catch (XmlException) { Error(path, "InvalidXmlCharacters", "Pole zawiera znaki niedozwolone w XML."); }
         }
         var draft = invoice.ToDraft();
+        SalesInvoicePaymentValidator.Validate(draft, errors, forIssuance: true);
         InvoiceSettlementCalculator.ValidateForIssuance(draft.Details.Settlement, invoice.GrossAmount, invoice.SettlementAmounts, errors);
 
         // Reuse draft validation, including VAT vocabulary, scales, ranges and calculation rules.
@@ -135,15 +136,6 @@ public sealed class SalesInvoiceIssuanceValidator(SalesInvoiceCalculator calcula
         }
         if (expected is { IsComplete: true }) ValidateAmounts(invoice, expected, errors);
         if (invoice.CalculationVersion != InvoiceCalculationResult.AlgorithmVersion) Error("calculationVersion", "CalculationVersionOutdated", "Przelicz projekt aktualną wersją algorytmu.");
-        for (var i = 0; i < draft.Details.PaymentTerms.Count; i++)
-        {
-            var term = draft.Details.PaymentTerms[i];
-            var path = $"details.paymentTerms[{i}]";
-            XmlText(term.Unit, path + ".unit"); XmlText(term.StartingEvent, path + ".startingEvent");
-            if (term.DueDate is { } due && (due < new DateOnly(2016, 7, 1) || due > new DateOnly(2050, 1, 1))) Error(path + ".dueDate", "InvalidPaymentDate", "Termin płatności jest poza zakresem FA(3).");
-            if ((term.Quantity is not null || term.Unit is not null || term.StartingEvent is not null) && (term.Quantity is null || string.IsNullOrWhiteSpace(term.Unit) || string.IsNullOrWhiteSpace(term.StartingEvent)))
-                Error(path, "PaymentTermDescriptionIncomplete", "Opis terminu wymaga ilości, jednostki i zdarzenia początkowego.");
-        }
         for (var i = 0; i < draft.Details.AdditionalDescriptions.Count; i++)
         {
             Required(draft.Details.AdditionalDescriptions[i].Key, $"details.additionalDescriptions[{i}].key");
@@ -151,7 +143,7 @@ public sealed class SalesInvoiceIssuanceValidator(SalesInvoiceCalculator calcula
             XmlText(draft.Details.AdditionalDescriptions[i].Key, $"details.additionalDescriptions[{i}].key");
             XmlText(draft.Details.AdditionalDescriptions[i].Value, $"details.additionalDescriptions[{i}].value");
         }
-        XmlText(draft.Notes, "notes"); XmlText(draft.Details.OtherPaymentDescription, "details.otherPaymentDescription");
+        XmlText(draft.Notes, "notes");
         // Both account collections (including XML characters) are checked by the shared domain validator above.
         return new(errors.Distinct().ToArray(), warnings.ToArray(), expected);
     }

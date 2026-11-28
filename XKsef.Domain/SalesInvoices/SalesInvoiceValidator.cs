@@ -66,16 +66,7 @@ public static class SalesInvoiceValidator
         if (details is not null)
         {
             InvoiceSettlementCalculator.ValidateInput(details.Settlement, issues);
-            Check(details.PaymentMethod is null or >= 1 and <= 8, "details.paymentMethod", "Nieprawidłowa forma płatności (8 = inna).");
-            Text(details.OtherPaymentDescription, 256, "details.otherPaymentDescription");
-            Check(details.PaymentMethod != 8 || !string.IsNullOrWhiteSpace(details.OtherPaymentDescription), "details.otherPaymentDescription", "Podaj opis innej płatności.");
-            Check(details.PaymentTerms is not null && details.PaymentTerms.Count <= 100, "details.paymentTerms", "Maksymalnie 100 terminów.");
-            foreach (var term in details.PaymentTerms ?? [])
-            {
-                if (term is null) { Check(false, "details.paymentTerms", "Termin nie może być null."); continue; }
-                Check(term.Quantity is null or > 0, "details.paymentTerms.quantity", "Ilość musi być dodatnia.");
-                Text(term.Unit, 50, "details.paymentTerms.unit"); Text(term.StartingEvent, 256, "details.paymentTerms.startingEvent");
-            }
+            SalesInvoicePaymentValidator.Validate(draft, issues);
             InvoiceBankAccountValidator.Validate(details.BankAccounts, 100, "details.bankAccounts", issues);
             InvoiceBankAccountValidator.Validate(details.FactorBankAccounts, 20, "details.factorBankAccounts", issues);
             Check(details.AdditionalDescriptions is not null && details.AdditionalDescriptions.Count <= 10000, "details.additionalDescriptions", "Maksymalnie 10000 opisów.");

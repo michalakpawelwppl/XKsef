@@ -123,6 +123,46 @@ public sealed class SalesInvoiceSnapshotTests
     }
 
     [Fact]
+    public void PaymentSnapshotFreezesReceivedAmountsDiscountAndIdentifiersWithoutRecalculatingBalances()
+    {
+        var total = Create().GrossAmount!.Value; var date = new DateOnly(2026, 11, 27);
+        var quantity = System.Numerics.BigInteger.Parse("123456789012345678901234567890");
+        var details = new SalesInvoiceDetailsData
+        {
+            PaymentStatus = InvoicePaymentStatus.FullyPaidInParts, PartialPayments = [new(1m, date, 1), new(total - 1m, date, 8, "Inna forma")],
+            CashDiscount = new("7 dni", "3% brutto"), PaymentLink = "https://pay.example/?IPKSeF=001ABC123DEF4", KsefPaymentId = "001ABC123DEF4",
+            PaymentTerms = [new(null, quantity, "dni", "od zdarzenia")]
+        };
+        var invoice = Create(details: details); var approval = Approve(invoice); var before = approval.SnapshotJson; var snapshot = Reader.Read(approval);
+        var payment = snapshot.Input!.Details!;
+        Assert.Equal(3, payment.PaymentStatus); Assert.Null(payment.PaymentDate); Assert.Equal(2, payment.PartialPayments!.Count);
+        Assert.Equal(1m, payment.PartialPayments[0].Amount!.Value.Value); Assert.Equal(total - 1m, payment.PartialPayments[1].Amount!.Value.Value);
+        Assert.Equal("Inna forma", payment.PartialPayments[1].OtherPaymentDescription); Assert.Equal(quantity, payment.PaymentTerms![0].Quantity);
+        Assert.Equal("3% brutto", payment.CashDiscount!.AmountDescription); Assert.Equal(details.PaymentLink, payment.PaymentLink); Assert.Equal(details.KsefPaymentId, payment.KsefPaymentId);
+        Assert.Equal(total, snapshot.Calculations!.Totals!.Gross!.Value.Value); Assert.Null(snapshot.Calculations.SettlementAmounts);
+        Assert.True(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+        Assert.Throws<NotSupportedException>(() => ((IList<ApprovedPartialPayment>)payment.PartialPayments).Clear());
+        typeof(SalesInvoiceDetails).GetProperty(nameof(SalesInvoiceDetails.Data))!.SetValue(invoice.Details, invoice.ToDraft().Details with { PartialPayments = [] });
+        Assert.False(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot)); Assert.Equal(before, approval.SnapshotJson);
+        Assert.Equal(2, Reader.Read(approval).Input!.Details!.PartialPayments!.Count);
+    }
+
+    [Fact]
+    public void HistoricalPaymentJsonPreservesUnknownFieldsAndExactNumericTermQuantity()
+    {
+        var invoice = Create(details: new() { PaymentTerms = [new(null, 14, "dni", "data wystawienia")] }); var row = Approve(invoice);
+        var json = JsonNode.Parse(row.SnapshotJson)!; var details = json["Input"]!["Details"]!;
+        foreach (var name in new[] { "PaymentStatus", "PaymentDate", "PartialPayments", "CashDiscount", "PaymentLink", "KsefPaymentId" }) details.AsObject().Remove(name);
+        details["PaymentTerms"]![0]!["Quantity"] = 14; // Exact historical JSON number, before BigInteger transport.
+        typeof(SalesInvoiceApproval).GetProperty(nameof(SalesInvoiceApproval.SnapshotJson))!.SetValue(row, json.ToJsonString());
+        var before = row.SnapshotJson; var snapshot = Reader.Read(row);
+        Assert.Null(snapshot.Input!.Details!.PaymentStatus); Assert.Null(snapshot.Input.Details.PaymentDate); Assert.Null(snapshot.Input.Details.PartialPayments);
+        Assert.Null(snapshot.Input.Details.CashDiscount); Assert.Null(snapshot.Input.Details.PaymentLink); Assert.Null(snapshot.Input.Details.KsefPaymentId);
+        Assert.Equal(new System.Numerics.BigInteger(14), snapshot.Input.Details.PaymentTerms![0].Quantity);
+        Assert.True(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot)); Assert.Equal(before, row.SnapshotJson);
+    }
+
+    [Fact]
     public void SettlementSnapshotFreezesInputAndResultsWithoutReadingOrRecalculatingCurrentData()
     {
         var invoice = Create(details: new() { Settlement = new() { Charges = [new(17m, "Zwrot kosztów")], Deductions = [new(300m, "Saldo klienta")] } });
