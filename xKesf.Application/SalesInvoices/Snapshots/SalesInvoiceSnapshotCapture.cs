@@ -36,7 +36,8 @@ internal static class SalesInvoiceSnapshotCapture
         Array.AsReadOnly(invoice.Lines.OrderBy(x => x.Ordinal).Select(x => new ApprovedSalesInvoiceLineResult(x.Id, x.NetAmount, x.VatAmount, x.GrossAmount, x.VatAmountPln,
             x.GlobalDiscountAllocation, x.VatRoundingAdjustment, (int?)x.VatAmountOrigin, x.VatBaseRoundingAdjustment, validatedCalculations?.Lines.Single(line => line.Id == x.Id).LineDiscount)).ToArray()),
         Array.AsReadOnly(invoice.TaxSummaries.OrderBy(x => x.TaxCode, StringComparer.Ordinal).Select(x => new ApprovedSalesInvoiceTaxSummary(x.TaxCode, x.NetAmount, x.VatAmount,
-            x.GrossAmount, x.VatAmountPln, x.CalculationDetails is { } d ? new(d.Version, (int)d.Method, (int)d.Basis, d.TaxBase, d.Rate) : null)).ToArray()));
+            x.GrossAmount, x.VatAmountPln, x.CalculationDetails is { } d ? new(d.Version, (int)d.Method, (int)d.Basis, d.TaxBase, d.Rate) : null)).ToArray()),
+        invoice.SettlementAmounts is null ? null : Copy<ApprovedInvoiceSettlementAmounts>(invoice.SettlementAmounts));
 
     internal static SalesInvoiceApprovalSnapshot Capture(SalesInvoice invoice, Guid approvalId, string actor, DateTimeOffset now, InvoiceCalculationResult validatedCalculations)
     {

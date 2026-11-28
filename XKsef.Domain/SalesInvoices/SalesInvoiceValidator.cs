@@ -65,6 +65,7 @@ public static class SalesInvoiceValidator
         Check(details is not null && details.Version == 1, "details", "Nieobsługiwana wersja danych dodatkowych.");
         if (details is not null)
         {
+            InvoiceSettlementCalculator.ValidateInput(details.Settlement, issues);
             Check(details.PaymentMethod is null or >= 1 and <= 8, "details.paymentMethod", "Nieprawidłowa forma płatności (8 = inna).");
             Text(details.OtherPaymentDescription, 256, "details.otherPaymentDescription");
             Check(details.PaymentMethod != 8 || !string.IsNullOrWhiteSpace(details.OtherPaymentDescription), "details.otherPaymentDescription", "Podaj opis innej płatności.");

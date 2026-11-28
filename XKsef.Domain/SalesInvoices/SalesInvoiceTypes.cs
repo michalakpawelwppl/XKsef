@@ -83,6 +83,7 @@ public sealed record InvoiceBankAccount(string Number, string? Swift = null, str
 public sealed record InvoiceAdditionalDescription(string Key, string Value, Guid? LineId = null);
 public sealed record SalesInvoiceDetailsData
 {
+    public InvoiceSettlementData? Settlement { get; init; }
     public int Version { get; init; } = 1;
     public int? PaymentMethod { get; init; }
     public string? OtherPaymentDescription { get; init; }

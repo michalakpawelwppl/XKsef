@@ -42,6 +42,7 @@ internal sealed class SalesInvoiceConfiguration : IEntityTypeConfiguration<Sales
         b.ToTable("SalesInvoices", t =>
         {
             t.HasCheckConstraint("CK_SalesInvoices_Status", "[Status] BETWEEN 0 AND 5");
+            t.HasCheckConstraint("CK_SalesInvoices_SettlementAmounts", "[SettlementAmounts] IS NULL OR ISJSON([SettlementAmounts]) = 1");
             t.HasCheckConstraint("CK_SalesInvoices_FinalNumber", "([FinalNumberReservationId] IS NULL AND [InvoiceNumber] IS NULL AND [NormalizedInvoiceNumber] IS NULL AND [KsefNumber] IS NULL) OR ([FinalNumberReservationId] IS NOT NULL AND [InvoiceNumber] IS NOT NULL AND [NormalizedInvoiceNumber] IS NOT NULL AND [KsefNumber] IS NOT NULL)");
             t.HasCheckConstraint("CK_SalesInvoices_Kind", "[Kind] BETWEEN 0 AND 6");
             t.HasCheckConstraint("CK_SalesInvoices_VatMethod", "[VatMethod] BETWEEN 0 AND 3");
@@ -63,6 +64,7 @@ internal sealed class SalesInvoiceConfiguration : IEntityTypeConfiguration<Sales
         b.Property(x => x.ModelVersion).HasDefaultValue(1);
         b.Property(x => x.IssuePlace).HasMaxLength(256);
         SalesInvoiceJson.Map(b.Property(x => x.Fa3)); b.Property(x => x.Fa3).HasDefaultValueSql("N'{\"Version\":1}'");
+        SalesInvoiceJson.Map(b.Property(x => x.SettlementAmounts));
         b.OwnsOne(x => x.SalePeriod, period =>
         {
             period.Property(x => x.Version).HasColumnName("SalePeriodVersion").IsRequired();

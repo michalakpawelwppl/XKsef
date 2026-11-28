@@ -4,7 +4,7 @@ namespace xKsef.Application.SalesInvoices.Snapshots;
 
 
 public sealed record ApprovedSalesInvoiceCalculations(bool? IsComplete, ApprovedSalesInvoiceTotals? Totals,
-    IReadOnlyList<ApprovedSalesInvoiceLineResult>? Lines, IReadOnlyList<ApprovedSalesInvoiceTaxSummary>? TaxSummaries);
+    IReadOnlyList<ApprovedSalesInvoiceLineResult>? Lines, IReadOnlyList<ApprovedSalesInvoiceTaxSummary>? TaxSummaries, ApprovedInvoiceSettlementAmounts? SettlementAmounts = null);
 
 public enum DisclosureRequirement { Required = 0, Optional = 1, Conditional = 2 }
 public enum DisclosureState { Present = 0, NotSupplied = 1, Unresolved = 2, FromNumberReservation = 3, NotDisclosed = 4 }

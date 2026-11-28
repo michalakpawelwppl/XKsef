@@ -29,6 +29,7 @@ public sealed class SalesInvoiceIssuanceValidator(SalesInvoiceCalculator calcula
             catch (XmlException) { Error(path, "InvalidXmlCharacters", "Pole zawiera znaki niedozwolone w XML."); }
         }
         var draft = invoice.ToDraft();
+        InvoiceSettlementCalculator.ValidateForIssuance(draft.Details.Settlement, invoice.GrossAmount, invoice.SettlementAmounts, errors);
 
         // Reuse draft validation, including VAT vocabulary, scales, ranges and calculation rules.
         InvoiceCalculationResult? expected = null;

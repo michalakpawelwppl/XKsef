@@ -1,3 +1,4 @@
+using System.Text;
 using xKsef.Domain.SalesInvoices;
 
 namespace xKsef.Application.SalesInvoices.Snapshots;
@@ -69,6 +70,25 @@ internal static class SalesInvoiceSnapshotValidation
         if (qualifications.Article42Paragraph5Applies is { } article42) Require(article42.Value is >= 0 and <= 2 && article42.Source is >= 0 and <= 3);
         Require(input.Fa3!.Qualifications!.HasMarginSales!.Value == 1 && input.Fa3.Qualifications.SelfBilling!.Value == 1 && input.Fa3.Qualifications.HasNewMeansOfTransport!.Value == 1);
         Require(p.Metadata is { SourceStatus: 0, SourceRowVersion: not null, ExchangeRateHistory: not null, MissingData.Count: 0 });
+        if (input.Details.Settlement is { } settlement)
+        {
+            Require(settlement.Charges is { Count: <= 100 } && settlement.Deductions is { Count: <= 100 });
+            bool Money(SnapshotDecimal? value) => value is { } amount && amount.Value is >= -9999999999999999.99m and <= 9999999999999999.99m && decimal.Round(amount.Value, 2) == amount.Value;
+            foreach (var entry in settlement.Charges.Concat(settlement.Deductions))
+                Require(entry is not null && Money(entry.Amount) && entry.Reason is not null
+                    && System.Text.RegularExpressions.Regex.Replace(entry.Reason, "[ \\t\\r\\n]+", " ").Trim(' ').EnumerateRunes().Count() is >= 1 and <= 256);
+            var amounts = c.SettlementAmounts;
+            Require(amounts?.ChargesTotal is not null && amounts.DeductionsTotal is not null);
+            Require(Money(amounts.ChargesTotal) && Money(amounts.DeductionsTotal));
+            Require(amounts.AmountDue is null || Money(amounts.AmountDue)); Require(amounts.Overpayment is null || Money(amounts.Overpayment));
+            // Check frozen arithmetic identities without running a calculator or replacing stored results.
+            Require(amounts.ChargesTotal.Value.Value == settlement.Charges.Sum(x => x.Amount!.Value.Value)
+                && amounts.DeductionsTotal.Value.Value == settlement.Deductions.Sum(x => x.Amount!.Value.Value));
+            var balance = c.Totals.Gross!.Value.Value + amounts.ChargesTotal.Value.Value - amounts.DeductionsTotal.Value.Value;
+            Require(balance >= 0 ? amounts.AmountDue?.Value == balance && amounts.Overpayment is null
+                : amounts.AmountDue is null && amounts.Overpayment?.Value == -balance);
+        }
+        else Require(c.SettlementAmounts is null);
         Span<byte> version = stackalloc byte[8];
         Require(Convert.TryFromBase64String(p.Metadata.SourceRowVersion, version, out var written) && written == 8);
         Require(p.Disclosure is { Version: not null, Fields.Count: > 0, InternalOnlyPaths.Count: > 0 });

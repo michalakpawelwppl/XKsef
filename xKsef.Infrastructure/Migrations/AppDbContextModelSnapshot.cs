@@ -891,6 +891,9 @@ namespace xKsef.Infrastructure.Migrations
                     b.Property<int?>("SaleDateMode")
                         .HasColumnType("int");
 
+                    b.Property<string>("SettlementAmounts")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
@@ -947,6 +950,8 @@ namespace xKsef.Infrastructure.Migrations
                             t.HasCheckConstraint("CK_SalesInvoices_PdfLanguage", "[PdfLanguage] BETWEEN 0 AND 2");
 
                             t.HasCheckConstraint("CK_SalesInvoices_SaleDateMode", "[SaleDateMode] IS NULL OR [SaleDateMode] BETWEEN 0 AND 5");
+
+                            t.HasCheckConstraint("CK_SalesInvoices_SettlementAmounts", "[SettlementAmounts] IS NULL OR ISJSON([SettlementAmounts]) = 1");
 
                             t.HasCheckConstraint("CK_SalesInvoices_Status", "[Status] BETWEEN 0 AND 5");
 

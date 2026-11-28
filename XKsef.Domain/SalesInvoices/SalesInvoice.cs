@@ -49,6 +49,7 @@ public sealed class SalesInvoice
     public decimal? VatAmountPln { get; private set; }
     public decimal GlobalDiscountAmount { get; private set; }
     public SalesInvoiceDetails Details { get; private set; } = null!;
+    public InvoiceSettlementAmounts? SettlementAmounts { get; private set; }
     public IReadOnlyList<SalesInvoiceLine> Lines => _lines.AsReadOnly();
     public IReadOnlyList<SalesInvoicePartySnapshot> Parties => _parties.AsReadOnly();
     public IReadOnlyList<SalesInvoiceTaxSummary> TaxSummaries => _taxSummaries.AsReadOnly();
@@ -109,6 +110,7 @@ public sealed class SalesInvoice
         var previous = Details is null ? null : ToDraft();
         var normalized = SalesInvoiceFa3Audit.Stamp(draft.Normalize(), previous, actor, now);
         var result = calculator.Calculate(normalized); // Validate and calculate before mutating the aggregate.
+        var settlement = InvoiceSettlementCalculator.Calculate(normalized.Details.Settlement, result.Gross);
         Kind = normalized.Kind; PlannedIssueDate = normalized.PlannedIssueDate; SaleDate = normalized.SaleDate;
         NumberSeriesId = normalized.NumberSeriesId;
         ModelVersion = normalized.ModelVersion; IssuePlace = normalized.IssuePlace; SaleDateMode = normalized.SaleDateMode; SalePeriod = normalized.SalePeriod;
@@ -118,6 +120,7 @@ public sealed class SalesInvoice
         UpdatedAt = now; UpdatedBy = actor; Revision = checked(Revision + 1);
         CalculationVersion = InvoiceCalculationResult.AlgorithmVersion; CalculationComplete = result.IsComplete;
         NetAmount = result.Net; VatAmount = result.Vat; GrossAmount = result.Gross; VatAmountPln = result.VatPln; GlobalDiscountAmount = result.GlobalDiscountAmount;
+        SettlementAmounts = settlement;
         var desiredIds = normalized.Lines.Select(x => x.Id).ToHashSet();
         _lines.RemoveAll(x => !desiredIds.Contains(x.Id));
         for (var i = 0; i < normalized.Lines.Count; i++)
@@ -274,8 +277,8 @@ public sealed class SalesInvoiceDetails
     public Guid TenantId { get; private set; }
     public Guid SalesInvoiceId { get; private set; }
     public SalesInvoiceDetailsData Data { get; private set; } = new();
-    internal void Replace(SalesInvoiceDetailsData data) => Data = data with { PaymentTerms = Array.AsReadOnly(data.PaymentTerms.ToArray()), BankAccounts = Array.AsReadOnly(data.BankAccounts.ToArray()), FactorBankAccounts = Array.AsReadOnly(data.FactorBankAccounts.ToArray()), AdditionalDescriptions = Array.AsReadOnly(data.AdditionalDescriptions.ToArray()) };
-    public SalesInvoiceDetailsData Snapshot() => Data with { PaymentTerms = Data.PaymentTerms.ToArray(), BankAccounts = Data.BankAccounts.ToArray(), FactorBankAccounts = Data.FactorBankAccounts.ToArray(), AdditionalDescriptions = Data.AdditionalDescriptions.ToArray() };
+    internal void Replace(SalesInvoiceDetailsData data) => Data = data with { Settlement = data.Settlement?.Freeze(), PaymentTerms = Array.AsReadOnly(data.PaymentTerms.ToArray()), BankAccounts = Array.AsReadOnly(data.BankAccounts.ToArray()), FactorBankAccounts = Array.AsReadOnly(data.FactorBankAccounts.ToArray()), AdditionalDescriptions = Array.AsReadOnly(data.AdditionalDescriptions.ToArray()) };
+    public SalesInvoiceDetailsData Snapshot() => Data with { Settlement = Data.Settlement?.Copy(), PaymentTerms = Data.PaymentTerms.ToArray(), BankAccounts = Data.BankAccounts.ToArray(), FactorBankAccounts = Data.FactorBankAccounts.ToArray(), AdditionalDescriptions = Data.AdditionalDescriptions.ToArray() };
 }
 
 // Reserved relationship model: no correction/advance issuing operations are exposed in stage 1.

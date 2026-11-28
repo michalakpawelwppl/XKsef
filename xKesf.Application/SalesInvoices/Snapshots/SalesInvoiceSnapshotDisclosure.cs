@@ -56,6 +56,7 @@ internal static class SalesInvoiceSnapshotDisclosure
             Add($"Lines[{line.Ordinal}].Vat", allocated ? null : amounts.Vat, DisclosureRequirement.Conditional, allocated ? DisclosureState.NotDisclosed : DisclosureState.Present);
         }
         Add("Totals", calculations.Totals, DisclosureRequirement.Required);
+        Add("SettlementAmounts", calculations.SettlementAmounts);
         Add("TaxSummaries", calculations.TaxSummaries!.Select(x => new { x.TaxCode, x.Net, x.Vat, x.Gross, x.VatPln }).ToArray(), DisclosureRequirement.Required);
         return new(SalesInvoiceSnapshotCapture.ProjectionVersion, fields.AsReadOnly(), Array.AsReadOnly(new[]
         {

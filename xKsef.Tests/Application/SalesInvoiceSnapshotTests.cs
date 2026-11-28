@@ -123,6 +123,44 @@ public sealed class SalesInvoiceSnapshotTests
     }
 
     [Fact]
+    public void SettlementSnapshotFreezesInputAndResultsWithoutReadingOrRecalculatingCurrentData()
+    {
+        var invoice = Create(details: new() { Settlement = new() { Charges = [new(17m, "Zwrot kosztów")], Deductions = [new(300m, "Saldo klienta")] } });
+        var approval = Approve(invoice); var original = approval.SnapshotJson; var snapshot = Reader.Read(approval);
+        Assert.Equal("Zwrot kosztów", Assert.Single(snapshot.Input!.Details!.Settlement!.Charges!).Reason);
+        Assert.Equal(17m, snapshot.Calculations!.SettlementAmounts!.ChargesTotal!.Value.Value);
+        Assert.Equal(300m - invoice.GrossAmount - 17m, snapshot.Calculations.SettlementAmounts.Overpayment!.Value.Value);
+        Assert.True(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+        Assert.Throws<NotSupportedException>(() => ((IList<ApprovedInvoiceSettlementEntry>)snapshot.Input.Details.Settlement.Charges!).Clear());
+        var disclosed = snapshot.Disclosure!.Fields!.Single(x => x.Path == "SettlementAmounts").Value!.Value;
+        Assert.Equal("17", disclosed.GetProperty("ChargesTotal").GetString());
+        typeof(SalesInvoice).GetProperty(nameof(SalesInvoice.SettlementAmounts))!.SetValue(invoice, new InvoiceSettlementAmounts(1, 0, 1, null));
+        Assert.False(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+        Assert.Equal(original, approval.SnapshotJson);
+        Assert.Equal(17m, Reader.Read(approval).Calculations!.SettlementAmounts!.ChargesTotal!.Value.Value);
+    }
+
+    [Fact]
+    public void HistoricalSnapshotWithoutSettlementReadsNullAndDoesNotRequireReapproval()
+    {
+        var invoice = Create(); var row = Approve(invoice); var json = JsonNode.Parse(row.SnapshotJson)!;
+        json["Input"]!["Details"]!.AsObject().Remove("Settlement"); json["Calculations"]!.AsObject().Remove("SettlementAmounts");
+        typeof(SalesInvoiceApproval).GetProperty(nameof(SalesInvoiceApproval.SnapshotJson))!.SetValue(row, json.ToJsonString());
+        var original = row.SnapshotJson; var snapshot = Reader.Read(row);
+        Assert.Null(snapshot.Input!.Details!.Settlement); Assert.Null(snapshot.Calculations!.SettlementAmounts);
+        Assert.True(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot)); Assert.Equal(original, row.SnapshotJson);
+    }
+
+    [Fact]
+    public void IncorrectFrozenSettlementAmountsAreRejectedInsteadOfRecalculated()
+    {
+        var invoice = Create(details: new() { Settlement = new() { Charges = [new(1m, "Powód")] } }); var row = Approve(invoice);
+        var json = JsonNode.Parse(row.SnapshotJson)!; json["Calculations"]!["SettlementAmounts"]!["ChargesTotal"] = "2";
+        typeof(SalesInvoiceApproval).GetProperty(nameof(SalesInvoiceApproval.SnapshotJson))!.SetValue(row, json.ToJsonString());
+        Assert.Equal("SnapshotIncomplete", Assert.Throws<SalesInvoiceApprovalSnapshotException>(() => Reader.Read(row)).Code);
+    }
+
+    [Fact]
     public void BankAccountSnapshotKeepsBothCollectionsTypesAndOrderWithoutDependingOnLaterData()
     {
         var seller = new InvoiceBankAccount("seller/123", "WBKPPLPP", "Bank sprzedawcy", "Opis", BankOwnAccountType.PurchasedReceivables);

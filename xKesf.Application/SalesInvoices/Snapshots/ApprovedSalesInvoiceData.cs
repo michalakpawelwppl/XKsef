@@ -101,6 +101,7 @@ public sealed record ApprovedBankAccount(string? Number, string? Swift = null, s
 public sealed record ApprovedAdditionalDescription(string? Key, string? Value, Guid? LineId = null);
 public sealed record ApprovedSalesInvoiceDetails
 {
+    public ApprovedInvoiceSettlement? Settlement { get; init; }
     public int? Version { get; init; }
     public int? PaymentMethod { get; init; }
     public string? OtherPaymentDescription { get; init; }
@@ -109,6 +110,13 @@ public sealed record ApprovedSalesInvoiceDetails
     public IReadOnlyList<ApprovedBankAccount>? FactorBankAccounts { get; init; }
     public IReadOnlyList<ApprovedAdditionalDescription>? AdditionalDescriptions { get; init; }
 }
+public sealed record ApprovedInvoiceSettlementEntry(SnapshotDecimal? Amount = null, string? Reason = null);
+public sealed record ApprovedInvoiceSettlement
+{
+    public IReadOnlyList<ApprovedInvoiceSettlementEntry>? Charges { get; init; }
+    public IReadOnlyList<ApprovedInvoiceSettlementEntry>? Deductions { get; init; }
+}
+public sealed record ApprovedInvoiceSettlementAmounts(SnapshotDecimal? ChargesTotal, SnapshotDecimal? DeductionsTotal, SnapshotDecimal? AmountDue, SnapshotDecimal? Overpayment);
 public sealed record ApprovedSalesInvoiceDraft
 {
     public int? ModelVersion { get; init; }

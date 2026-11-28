@@ -102,6 +102,7 @@ public sealed record BankAccountDto(string Number, string? Swift = null, string?
 public sealed record AdditionalDescriptionDto(string Key, string Value, Guid? LineId = null);
 public sealed record SalesInvoiceDetailsDto
 {
+    public InvoiceSettlementDto? Settlement { get; init; }
     public int Version { get; init; } = 1;
     public int? PaymentMethod { get; init; }
     public string? OtherPaymentDescription { get; init; }
@@ -146,6 +147,6 @@ public sealed record SalesInvoiceLineResultDto(Guid Id, ExactDecimal? Net, Exact
 public sealed record VatCalculationDetailsDto(int Version, int Method, int Basis, ExactDecimal TaxBase, ExactDecimal Rate);
 public sealed record SalesInvoiceTaxSummaryDto(string TaxCode, ExactDecimal Net, ExactDecimal Vat, ExactDecimal Gross, ExactDecimal VatPln, VatCalculationDetailsDto? CalculationDetails = null);
 public sealed record ExchangeRateHistoryDto(ExchangeRateDto Snapshot, bool IsCurrent, DateTimeOffset CreatedAt, string CreatedBy);
-public sealed record SalesInvoiceDto(Guid Id, int Status, int Revision, string Version, SalesInvoiceDraftDto Draft, bool CalculationComplete, string CalculationVersion, SalesInvoiceTotalsDto Totals, IReadOnlyList<SalesInvoiceLineResultDto> LineResults, IReadOnlyList<SalesInvoiceTaxSummaryDto> TaxSummaries, IReadOnlyList<ExchangeRateHistoryDto> ExchangeRateHistory, IReadOnlyList<SalesInvoiceIssueDto> MissingData, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, SalesInvoiceApprovalDto? Approval = null, string? InvoiceNumber = null, string? KsefNumber = null, Guid? FinalNumberReservationId = null, IReadOnlyList<QualificationDecisionStateDto>? QualificationDecisions = null);
+public sealed record SalesInvoiceDto(Guid Id, int Status, int Revision, string Version, SalesInvoiceDraftDto Draft, bool CalculationComplete, string CalculationVersion, SalesInvoiceTotalsDto Totals, IReadOnlyList<SalesInvoiceLineResultDto> LineResults, IReadOnlyList<SalesInvoiceTaxSummaryDto> TaxSummaries, IReadOnlyList<ExchangeRateHistoryDto> ExchangeRateHistory, IReadOnlyList<SalesInvoiceIssueDto> MissingData, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, SalesInvoiceApprovalDto? Approval = null, string? InvoiceNumber = null, string? KsefNumber = null, Guid? FinalNumberReservationId = null, IReadOnlyList<QualificationDecisionStateDto>? QualificationDecisions = null, InvoiceSettlementAmountsDto? SettlementAmounts = null);
 public sealed record SalesInvoiceListItemDto(Guid Id, int Status, DateOnly? PlannedIssueDate, string Currency, ExactDecimal? Net, ExactDecimal? Vat, ExactDecimal? Gross, DateTimeOffset UpdatedAt, int Revision);
 public sealed record SalesInvoiceListDto(IReadOnlyList<SalesInvoiceListItemDto> Items, int TotalCount, int Page, int PageSize);

@@ -258,7 +258,8 @@ public sealed partial class BrowserAuthenticationTests
         Assert.Contains(migrations.Keys, x => x.EndsWith("AddInvoiceNumberSeries", StringComparison.Ordinal));
         Assert.Contains(migrations.Keys, x => x.EndsWith("AddInvoiceNumberReservations", StringComparison.Ordinal));
         Assert.Contains(migrations.Keys, x => x.EndsWith("AddBasicSalesInvoiceFa3Data", StringComparison.Ordinal));
-        Assert.Contains("SimplifySalesInvoiceApprovalSnapshots", migrations.Last().Key);
+        Assert.Contains(migrations.Keys, x => x.EndsWith("SimplifySalesInvoiceApprovalSnapshots", StringComparison.Ordinal));
+        Assert.Contains("AddSalesInvoiceSettlement", migrations.Last().Key);
         await Assert.ThrowsAsync<Microsoft.Data.SqlClient.SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE SalesInvoiceLines SET TenantId={otherTenant} WHERE SalesInvoiceId={created.Id} AND TenantId={tenant}"));
         Assert.Equal(0, await db.Invoices.CountAsync(x => x.TenantId == tenant));
     }
