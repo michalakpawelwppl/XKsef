@@ -44,13 +44,13 @@ public sealed partial class BrowserAuthenticationTests
         Assert.Equal(0, created.Status); Assert.True(created.CalculationComplete); Assert.Equal(1, created.Revision);
         Assert.Equal(125.15m, created.Totals.Net!.Value.Value); Assert.Equal(8, Convert.FromBase64String(created.Version).Length);
         var id = created.Draft.Lines[0].Id; var firstVersion = created.Version;
-        foreach (var method in new[] { 1, 2, 0 })
+        foreach (var method in new[] { 0, 1, 2, 3 })
         {
             var draft = created.Draft with { VatMethod = method, GlobalDiscountBasis = 1, GlobalDiscount = new(0, new(10m)) };
             using var response = await browser.SendAsync(HttpMethod.Put, $"/api/sales-invoices/{created.Id}", new UpdateSalesInvoiceRequest(created.Version, draft), tenantId: tenant);
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             created = (await response.Content.ReadFromJsonAsync<SalesInvoiceDto>())!;
-            Assert.Equal(method == 1 ? 0 : 1, created.Draft.GlobalDiscountBasis);
+            Assert.Equal(1, created.Draft.GlobalDiscountBasis);
             Assert.Equal(100.12345678m, created.Draft.Lines[0].UnitPrice!.Value.Value); Assert.Equal(id, created.Draft.Lines[0].Id);
         }
         Assert.NotEqual(firstVersion, created.Version);
@@ -252,7 +252,13 @@ public sealed partial class BrowserAuthenticationTests
         Assert.False(db.Database.HasPendingModelChanges()); Assert.Empty(await db.Database.GetPendingMigrationsAsync());
         var property = db.Model.FindEntityType(typeof(SalesInvoiceLine))!.FindProperty(nameof(SalesInvoiceLine.UnitPrice))!;
         Assert.Equal(22, property.GetPrecision()); Assert.Equal(8, property.GetScale());
-        var migration = db.GetService<IMigrationsAssembly>().Migrations.Last(); Assert.Contains("AddSalesInvoiceDrafts", migration.Key);
+        var migrations = db.GetService<IMigrationsAssembly>().Migrations;
+        Assert.Contains(migrations.Keys, x => x.EndsWith("AddSalesInvoiceDrafts", StringComparison.Ordinal));
+        Assert.Contains(migrations.Keys, x => x.EndsWith("AddSalesInvoiceApprovals", StringComparison.Ordinal));
+        Assert.Contains(migrations.Keys, x => x.EndsWith("AddInvoiceNumberSeries", StringComparison.Ordinal));
+        Assert.Contains(migrations.Keys, x => x.EndsWith("AddInvoiceNumberReservations", StringComparison.Ordinal));
+        Assert.Contains(migrations.Keys, x => x.EndsWith("AddBasicSalesInvoiceFa3Data", StringComparison.Ordinal));
+        Assert.Contains("SimplifySalesInvoiceApprovalSnapshots", migrations.Last().Key);
         await Assert.ThrowsAsync<Microsoft.Data.SqlClient.SqlException>(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE SalesInvoiceLines SET TenantId={otherTenant} WHERE SalesInvoiceId={created.Id} AND TenantId={tenant}"));
         Assert.Equal(0, await db.Invoices.CountAsync(x => x.TenantId == tenant));
     }

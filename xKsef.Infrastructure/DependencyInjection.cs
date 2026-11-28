@@ -1,4 +1,4 @@
-﻿using KSeF.Client.Core.Interfaces.Services;
+using KSeF.Client.Core.Interfaces.Services;
 using KSeF.Client.DI;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -106,8 +106,11 @@ public static class DependencyInjection
         services.AddScoped<IContractorRepository, ContractorRepository>();
         services.AddScoped<IContractorService, ContractorService>();
         services.AddSingleton<xKsef.Domain.SalesInvoices.Calculation.SalesInvoiceCalculator>();
+        services.AddSingleton<xKsef.Application.SalesInvoices.SalesInvoiceIssuanceValidator>();
         services.AddScoped<xKsef.Application.SalesInvoices.ISalesInvoiceRepository, SalesInvoiceRepository>();
         services.AddScoped<xKsef.Application.SalesInvoices.ISalesInvoiceService, xKsef.Application.SalesInvoices.SalesInvoiceService>();
+        services.AddSingleton<xKsef.Application.SalesInvoices.Snapshots.ISalesInvoiceApprovalSnapshotWriter, xKsef.Application.SalesInvoices.Snapshots.SalesInvoiceApprovalSnapshotWriter>();
+        services.AddSingleton<xKsef.Application.SalesInvoices.Snapshots.ISalesInvoiceApprovalSnapshotReader, xKsef.Application.SalesInvoices.Snapshots.SalesInvoiceApprovalSnapshotReader>();
         services.AddScoped<IInvoiceQueryService, InvoiceQueryService>();
         services.AddScoped<InvoiceImportService>();
         services.AddScoped<IInvoiceImportTransaction, InvoiceImportTransaction>();
@@ -115,6 +118,12 @@ public static class DependencyInjection
         services.AddScoped<ITenantService, TenantService>();
         services.AddScoped<ITenantUsersService, TenantUsersService>();
         services.AddScoped<ITenantAccessService, TenantAccessService>();
+        services.AddScoped<ITenantPermissionService, TenantPermissionService>();
+        services.AddScoped<xKsef.Application.InvoiceNumbering.IInvoiceNumberSeriesRepository, InvoiceNumberSeriesRepository>();
+        services.AddScoped<xKsef.Application.InvoiceNumbering.IInvoiceNumberSeriesService, xKsef.Application.InvoiceNumbering.InvoiceNumberSeriesService>();
+        services.AddScoped<xKsef.Application.InvoiceNumbering.IInvoiceNumberingRepository, InvoiceNumberingRepository>();
+        services.AddScoped<xKsef.Application.InvoiceNumbering.IInvoiceNumberingService, xKsef.Application.InvoiceNumbering.InvoiceNumberingService>();
+        services.TryAddScoped<xKsef.Application.InvoiceNumbering.IInvoiceIssuanceOutcomeSource, xKsef.Application.InvoiceNumbering.UnavailableInvoiceIssuanceOutcomeSource>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IInvoiceMetadataParser, KsefInvoiceMetadataParser>();
 

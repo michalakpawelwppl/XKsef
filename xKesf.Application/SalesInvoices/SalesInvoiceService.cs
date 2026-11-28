@@ -2,10 +2,12 @@ using xKsef.Application.Contractors;
 using xKsef.Application.Tenants;
 using xKsef.Domain.SalesInvoices;
 using xKsef.Domain.SalesInvoices.Calculation;
+using xKsef.Application.SalesInvoices.Snapshots;
+using xKsef.Application.InvoiceNumbering;
 
 namespace xKsef.Application.SalesInvoices;
 
-public sealed class SalesInvoiceService(ISalesInvoiceRepository repository, ITenantService tenants, IContractorService contractors, SalesInvoiceCalculator calculator, TimeProvider clock) : ISalesInvoiceService
+public sealed class SalesInvoiceService(ISalesInvoiceRepository repository, ITenantService tenants, IContractorService contractors, SalesInvoiceCalculator calculator, TimeProvider clock, SalesInvoiceIssuanceValidator issuanceValidator, ITenantPermissionService permissions, IInvoiceNumberSeriesRepository numberSeries, ISalesInvoiceApprovalSnapshotWriter snapshots) : ISalesInvoiceService
 {
     public async Task<SalesInvoice> CreateAsync(Guid tenantId, string userId, SalesInvoiceDraft draft, CancellationToken cancellationToken = default)
     {
@@ -16,6 +18,35 @@ public sealed class SalesInvoiceService(ISalesInvoiceRepository repository, ITen
     }
 
     public Task<SalesInvoice?> GetAsync(Guid tenantId, Guid id, CancellationToken cancellationToken = default) => repository.GetAsync(tenantId, id, false, cancellationToken);
+
+    public async Task<SalesInvoiceIssuanceValidationResult> ValidateIssuanceAsync(Guid tenantId, Guid id, CancellationToken cancellationToken = default)
+    {
+        var invoice = await repository.GetAsync(tenantId, id, false, cancellationToken) ?? throw new KeyNotFoundException();
+        return await ValidateForIssuanceAsync(invoice, cancellationToken);
+    }
+
+    public async Task<SalesInvoice> ApproveAsync(Guid tenantId, Guid id, string userId, byte[] expectedVersion, int expectedRevision, CancellationToken cancellationToken = default)
+    {
+        if (!await permissions.HasPermissionAsync(userId, tenantId, TenantPermissions.SalesInvoicesIssue, cancellationToken))
+            throw new TenantPermissionDeniedException(TenantPermissions.SalesInvoicesIssue);
+        var invoice = await LoadAsync(tenantId, id, expectedVersion, cancellationToken);
+        if (invoice.Revision != expectedRevision) throw new SalesInvoiceConflictException();
+        var validation = await ValidateForIssuanceAsync(invoice, cancellationToken);
+        if (!validation.IsReadyForIssuance) throw new SalesInvoiceValidationException(validation.Errors);
+        // No await or reload between validation, snapshot capture and transition.
+        var approvalId = Guid.NewGuid(); var approvedAt = clock.GetUtcNow();
+        var snapshot = snapshots.Write(invoice, approvalId, userId, approvedAt, validation.Calculations);
+        invoice.Approve(expectedRevision, userId, approvedAt, snapshot, approvalId);
+        await repository.SaveAsync(invoice, expectedVersion, cancellationToken);
+        return invoice;
+    }
+
+    public async Task<SalesInvoice> UnapproveAsync(Guid tenantId, Guid id, string userId, byte[] expectedVersion, int expectedRevision, CancellationToken cancellationToken = default)
+    {
+        if (!await permissions.HasPermissionAsync(userId, tenantId, TenantPermissions.SalesInvoicesUnapprove, cancellationToken))
+            throw new TenantPermissionDeniedException(TenantPermissions.SalesInvoicesUnapprove);
+        return await repository.UnapproveAsync(tenantId, id, expectedVersion, expectedRevision, userId, clock.GetUtcNow(), cancellationToken);
+    }
 
     public async Task<SalesInvoice> UpdateAsync(Guid tenantId, Guid id, string userId, byte[] expectedVersion, SalesInvoiceDraft draft, CancellationToken cancellationToken = default)
     {
@@ -48,11 +79,25 @@ public sealed class SalesInvoiceService(ISalesInvoiceRepository repository, ITen
         return invoice;
     }
 
+    private async Task<SalesInvoiceIssuanceValidationResult> ValidateForIssuanceAsync(SalesInvoice invoice, CancellationToken cancellationToken)
+    {
+        var selected = invoice.NumberSeriesId is { } id ? await numberSeries.GetAsync(invoice.TenantId, id, false, cancellationToken) : null;
+        var result = issuanceValidator.Validate(invoice);
+        return selected is { IsActive: true } ? result : new(result.Errors.Concat([new InvoiceValidationIssue("numberSeriesId", "ActiveSeriesRequired", "Przed zatwierdzeniem wybierz aktywną serię numeracyjną tego tenanta.")]).ToArray(), result.Warnings);
+    }
+
     private async Task<SalesInvoiceDraft> PrepareAsync(Guid tenantId, SalesInvoiceDraft draft, SalesInvoice? existing, CancellationToken cancellationToken)
     {
         if (tenantId == Guid.Empty) throw Invalid("tenantId", "Nieprawidłowy tenant.");
-        if (draft is null || draft.Lines is null || draft.ExchangeRates is null) throw Invalid("draft", "Nieprawidłowa struktura projektu.");
+        if (draft is null || draft.Lines is null || draft.ExchangeRates is null || draft.Participants is null || draft.Fa3 is null) throw Invalid("draft", "Nieprawidłowa struktura projektu.");
         var taxEntity = await tenants.GetTaxEntityAsync(tenantId, cancellationToken) ?? throw new KeyNotFoundException();
+        var selectedSeriesId = draft.NumberSeriesId ?? existing?.NumberSeriesId;
+        if (selectedSeriesId is null && existing is null) selectedSeriesId = (await numberSeries.GetDefaultAsync(tenantId, draft.Kind, cancellationToken))?.SeriesId;
+        if (selectedSeriesId is { } selectedId)
+        {
+            var series = await numberSeries.GetAsync(tenantId, selectedId, false, cancellationToken);
+            if (series is null || !series.IsActive) throw Invalid("numberSeriesId", "Wybierz aktywną serię numeracyjną tego tenanta.");
+        }
         var lines = new List<SalesInvoiceLineInput>();
         var oldIds = existing?.Lines.Select(x => x.Id).ToHashSet() ?? [];
         foreach (var line in draft.Lines)
@@ -67,32 +112,47 @@ public sealed class SalesInvoiceService(ISalesInvoiceRepository repository, ITen
         if (seller.SourceContractorId is not null || seller.IdentifierKind != TaxIdentifierKind.Nip || seller.Identifier is not null && NormalizeNip(seller.Identifier) != expectedNip)
             throw Invalid("seller.identifier", "Sprzedawca musi należeć do podmiotu podatkowego tenanta.");
         seller = seller with { IdentifierKind = TaxIdentifierKind.Nip, Identifier = expectedNip };
-        var buyer = draft.Buyer;
-        if (buyer?.SourceContractorId is { } contractorId)
+        async Task<SalesInvoicePartyData?> PrepareParty(SalesInvoicePartyData? party, SalesInvoicePartyData? old, string path)
         {
-            var contractor = await contractors.GetByIdAsync(tenantId, contractorId, cancellationToken) ?? throw Invalid("buyer.sourceContractorId", "Kontrahent nie istnieje w tenantcie.");
-            // A source is copied only when first selected; ordinary reads/updates never refresh the snapshot.
-            if (existing?.ToDraft().Buyer?.SourceContractorId != contractorId)
+            if (party?.SourceContractorId is { } contractorId)
             {
-                var data = contractor.ContractorData;
-                var address = contractor.Addresses.FirstOrDefault()?.AddressData;
-                var identifierKind = data.Nip is not null ? TaxIdentifierKind.Nip : data.EuVatNumber is not null ? TaxIdentifierKind.EuVat : data.OtherTaxNumber is not null ? TaxIdentifierKind.Other : TaxIdentifierKind.None;
-                var eu = data.EuVatNumber;
-                buyer = buyer with
+                var contractor = await contractors.GetByIdAsync(tenantId, contractorId, cancellationToken) ?? throw Invalid(path + ".sourceContractorId", "Kontrahent nie istnieje w tenantcie.");
+                if (old?.SourceContractorId != contractorId)
                 {
-                    Name = data.FullName, IdentifierKind = identifierKind,
-                    Identifier = data.Nip is not null ? NormalizeNip(data.Nip) : eu is not null && eu.Length >= 3 ? eu[2..] : data.OtherTaxNumber,
-                    IdentifierCountryCode = eu is not null && eu.Length >= 3 ? eu[..2] : null,
-                    Address = address is null ? null : new InvoiceAddress(address.CountryCode, string.Join(" ", new[] { address.Street, address.BuildingNumber, address.ApartmentNumber is null ? null : "/" + address.ApartmentNumber }.Where(x => !string.IsNullOrWhiteSpace(x))), address.PostalCode + " " + address.City)
-                };
+                    var data = contractor.ContractorData;
+                    var address = contractor.Addresses.FirstOrDefault()?.AddressData;
+                    var eu = data.EuVatNumber;
+                    party = party with
+                    {
+                        Name = data.FullName,
+                        IdentifierKind = data.Nip is not null ? TaxIdentifierKind.Nip : eu is not null ? TaxIdentifierKind.EuVat : data.OtherTaxNumber is not null ? TaxIdentifierKind.Other : TaxIdentifierKind.None,
+                        Identifier = data.Nip is not null ? NormalizeNip(data.Nip) : eu is not null && eu.Length >= 3 ? eu[2..] : data.OtherTaxNumber,
+                        IdentifierCountryCode = eu is not null && eu.Length >= 3 ? eu[..2] : null,
+                        Address = address is null ? null : new InvoiceAddress(address.CountryCode, string.Join(" ", new[] { address.Street, address.BuildingNumber, address.ApartmentNumber is null ? null : "/" + address.ApartmentNumber }.Where(x => !string.IsNullOrWhiteSpace(x))), address.PostalCode + " " + address.City)
+                    };
+                }
             }
+            return ValidateIdentifier(party, path);
         }
-        buyer = ValidateIdentifier(buyer, "buyer");
+        var oldDraft = existing?.ToDraft();
+        var buyer = await PrepareParty(draft.Buyer, oldDraft?.Buyer, "buyer");
+        var participants = new List<InvoiceParticipantData>();
+        foreach (var participant in draft.Participants)
+        {
+            if (participant is null) throw Invalid("participants", "Uczestnik nie może być null.");
+            var old = oldDraft?.Participants.SingleOrDefault(x => x.Id == participant.Id);
+            if (participant.Id != Guid.Empty && old is null) throw Invalid("participants.id", "Nowy uczestnik nie może wskazywać istniejącego identyfikatora.");
+            participants.Add(participant with { Id = participant.Id == Guid.Empty ? Guid.NewGuid() : participant.Id,
+                Party = await PrepareParty(participant.Party, old?.Party, "participants.party") ?? throw Invalid("participants.party", "Brak danych uczestnika.") });
+        }
+        var fa3 = draft.Fa3;
+        if (fa3.AuthorizedParty is { } authorized)
+            fa3 = fa3 with { AuthorizedParty = authorized with { Party = await PrepareParty(authorized.Party, oldDraft?.Fa3.AuthorizedParty?.Party, "fa3.authorizedParty.party") ?? throw Invalid("fa3.authorizedParty.party", "Brak danych podmiotu.") } };
         var rates = draft.ExchangeRates.Select(x => x is null ? throw Invalid("exchangeRates", "Kurs nie może być null.") : x with { Id = x.Id == Guid.Empty ? Guid.NewGuid() : x.Id }).ToArray();
-        return draft with { Seller = seller, Buyer = buyer, Lines = lines, ExchangeRates = rates };
+        return draft with { NumberSeriesId = selectedSeriesId, Seller = seller, Buyer = buyer, Lines = lines, ExchangeRates = rates, Participants = participants, Fa3 = fa3 };
     }
 
-    private static SalesInvoicePartyData? ValidateIdentifier(SalesInvoicePartyData? party, string path)
+    internal static SalesInvoicePartyData? ValidateIdentifier(SalesInvoicePartyData? party, string path)
     {
         if (party is null || string.IsNullOrWhiteSpace(party.Identifier)) return party;
         try
@@ -102,6 +162,7 @@ public sealed class SalesInvoiceService(ISalesInvoiceRepository repository, ITen
                 ContractorIdentifierValidator.NormalizeAndValidateNip(party.Identifier);
                 return party with { Identifier = NormalizeNip(party.Identifier) };
             }
+            if (party.IdentifierKind == TaxIdentifierKind.InternalId && !System.Text.RegularExpressions.Regex.IsMatch(party.Identifier, @"^[1-9]((\d[1-9])|([1-9]\d))\d{7}-\d{5}$")) throw new ArgumentException();
             if (party.IdentifierKind == TaxIdentifierKind.EuVat && (party.Identifier.Length > 12 || party.IdentifierCountryCode is null || !System.Text.RegularExpressions.Regex.IsMatch(party.IdentifierCountryCode, "^(AT|BE|BG|CY|CZ|DE|DK|EE|EL|ES|FI|FR|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|PT|RO|SE|SI|SK|XI)$") || !System.Text.RegularExpressions.Regex.IsMatch(party.Identifier, "^[A-Z0-9+*]{1,12}$")))
                 throw new ArgumentException();
             if (party.IdentifierKind == TaxIdentifierKind.None) throw new ArgumentException();

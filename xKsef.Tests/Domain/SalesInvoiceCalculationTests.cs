@@ -12,9 +12,10 @@ public sealed class SalesInvoiceCalculationTests
     public static SalesInvoiceLineInput Line(Guid id, decimal? price = 100m, decimal? quantity = 1m, PriceBasis basis = PriceBasis.Net, string tax = "23") => new() { Id = id, Description = "Test", Unit = "kg", UnitPrice = price, Quantity = quantity, PriceBasis = basis, TaxCode = tax };
 
     [Theory]
-    [InlineData(VatCalculationMethod.PerLine, "0.06", "0.02", "0.08")]
+    [InlineData(VatCalculationMethod.PerLineNet, "0.06", "0.02", "0.08")]
     [InlineData(VatCalculationMethod.ByNetTotals, "0.06", "0.01", "0.07")]
-    [InlineData(VatCalculationMethod.ByGrossTotals, "0.07", "0.01", "0.08")]
+    [InlineData(VatCalculationMethod.ByGrossTotals, "0.06", "0.01", "0.07")]
+    [InlineData(VatCalculationMethod.PerLineGross, "0.06", "0.02", "0.08")]
     public void MethodsHaveTheirOwnRoundingSemantics(VatCalculationMethod method, string net, string vat, string gross)
     {
         var result = _calculator.Calculate(new() { VatMethod = method, Lines = [Line(A, .03m), Line(B, .03m)] });
@@ -23,18 +24,15 @@ public sealed class SalesInvoiceCalculationTests
     }
 
     [Theory]
-    [InlineData(VatCalculationMethod.PerLine)]
+    [InlineData(VatCalculationMethod.PerLineNet)]
+    [InlineData(VatCalculationMethod.PerLineGross)]
     [InlineData(VatCalculationMethod.ByNetTotals)]
     [InlineData(VatCalculationMethod.ByGrossTotals)]
     public void MixedPricesMultipleRatesAndGlobalDiscount(VatCalculationMethod method)
     {
         var draft = new SalesInvoiceDraft { VatMethod = method, GlobalDiscount = new(DiscountKind.Percent, 10m), Lines = [Line(A, 100m, 2m), Line(B, 108m, 1m, PriceBasis.Gross, "8"), Line(C, 50m, 1m, PriceBasis.Net, "zw")] };
         var result = _calculator.Calculate(draft);
-        if (method == VatCalculationMethod.ByGrossTotals)
-        {
-            Assert.Equal(40.40m, result.GlobalDiscountAmount);
-        }
-        else Assert.Equal(35m, result.GlobalDiscountAmount);
+        Assert.Equal(35m, result.GlobalDiscountAmount);
         Assert.Equal(315m, result.Net); Assert.Equal(48.60m, result.Vat); Assert.Equal(363.60m, result.Gross);
         Assert.Equal(3, result.TaxSummaries.Count); AssertConsistent(result);
     }
@@ -68,7 +66,7 @@ public sealed class SalesInvoiceCalculationTests
     [Fact]
     public void GrossGlobalDiscountKeepsItsExactMoneyBasisForNetInputPrices()
     {
-        var draft = new SalesInvoiceDraft { Lines = [Line(A, .03m), Line(B, .03m)], GlobalDiscountBasis = PriceBasis.Gross };
+        var draft = new SalesInvoiceDraft { VatMethod = VatCalculationMethod.PerLineGross, Lines = [Line(A, .03m), Line(B, .03m)], GlobalDiscountBasis = PriceBasis.Gross };
         var before = _calculator.Calculate(draft);
         var after = _calculator.Calculate(draft with { GlobalDiscount = new(DiscountKind.Amount, .01m) });
         Assert.Equal(.08m, before.Gross); Assert.Equal(.07m, after.Gross);
@@ -78,16 +76,16 @@ public sealed class SalesInvoiceCalculationTests
     [Fact]
     public void NetGlobalDiscountKeepsItsExactMoneyBasisForGrossInputPrices()
     {
-        var draft = new SalesInvoiceDraft { Lines = [Line(A, .03m, basis: PriceBasis.Gross), Line(B, .03m, basis: PriceBasis.Gross)] };
+        var draft = new SalesInvoiceDraft { VatMethod = VatCalculationMethod.ByNetTotals, Lines = [Line(A, .03m, basis: PriceBasis.Gross), Line(B, .03m, basis: PriceBasis.Gross)] };
         var before = _calculator.Calculate(draft);
         var after = _calculator.Calculate(draft with { GlobalDiscount = new(DiscountKind.Amount, .01m) });
-        Assert.Equal(.04m, before.Net); Assert.Equal(.03m, after.Net); AssertConsistent(after);
+        Assert.Equal(.05m, before.Net); Assert.Equal(.04m, after.Net); AssertConsistent(after);
     }
 
     [Fact]
     public void DiscountRoundedToZeroDoesNotChangeThePriceRoundingBasis()
     {
-        var draft = new SalesInvoiceDraft { Lines = [Line(A, .03m, basis: PriceBasis.Gross), Line(B, .03m, basis: PriceBasis.Gross)] };
+        var draft = new SalesInvoiceDraft { VatMethod = VatCalculationMethod.ByNetTotals, Lines = [Line(A, .03m, basis: PriceBasis.Gross), Line(B, .03m, basis: PriceBasis.Gross)] };
         var before = _calculator.Calculate(draft);
         var after = _calculator.Calculate(draft with { GlobalDiscount = new(DiscountKind.Percent, .000001m) });
         Assert.Equal(before.Net, after.Net); Assert.Equal(before.Vat, after.Vat); Assert.Equal(before.Gross, after.Gross);
@@ -103,8 +101,8 @@ public sealed class SalesInvoiceCalculationTests
     }
 
     [Theory]
-    [InlineData(VatCalculationMethod.PerLine, PriceBasis.Net)]
-    [InlineData(VatCalculationMethod.PerLine, PriceBasis.Gross)]
+    [InlineData(VatCalculationMethod.PerLineNet, PriceBasis.Net)]
+    [InlineData(VatCalculationMethod.PerLineNet, PriceBasis.Gross)]
     [InlineData(VatCalculationMethod.ByNetTotals, PriceBasis.Net)]
     [InlineData(VatCalculationMethod.ByGrossTotals, PriceBasis.Gross)]
     public void ReorderingNeverChangesAllocations(VatCalculationMethod method, PriceBasis basis)
@@ -187,7 +185,8 @@ public sealed class SalesInvoiceCalculationTests
     }
 
     [Theory]
-    [InlineData(VatCalculationMethod.PerLine)]
+    [InlineData(VatCalculationMethod.PerLineNet)]
+    [InlineData(VatCalculationMethod.PerLineGross)]
     [InlineData(VatCalculationMethod.ByNetTotals)]
     [InlineData(VatCalculationMethod.ByGrossTotals)]
     public void RepeatedMixedInputCasesPreserveInvariantsAndPermutationIndependence(VatCalculationMethod method)
@@ -208,14 +207,14 @@ public sealed class SalesInvoiceCalculationTests
     }
 
     [Fact]
-    public void ChangingVatMethodNormalizesDiscountBasisWithoutTouchingSourcePrices()
+    public void ChangingVatMethodPreservesExplicitDiscountBasisAndSourcePrices()
     {
         var source = new SalesInvoiceDraft { Lines = [Line(A, 100.12345678m)], GlobalDiscountBasis = PriceBasis.Gross };
         var invoice = SalesInvoice.Create(Guid.NewGuid(), source, "user", DateTimeOffset.UtcNow, _calculator);
-        foreach (var method in new[] { VatCalculationMethod.ByNetTotals, VatCalculationMethod.ByGrossTotals, VatCalculationMethod.PerLine })
+        foreach (var method in new[] { VatCalculationMethod.ByNetTotals, VatCalculationMethod.ByGrossTotals, VatCalculationMethod.PerLineNet })
         {
             invoice.UpdateDraft(invoice.ToDraft() with { VatMethod = method }, "user", DateTimeOffset.UtcNow, _calculator);
-            Assert.Equal(method == VatCalculationMethod.ByNetTotals ? PriceBasis.Net : PriceBasis.Gross, invoice.GlobalDiscountBasis);
+            Assert.Equal(PriceBasis.Gross, invoice.GlobalDiscountBasis);
             Assert.Equal(100.12345678m, invoice.Lines[0].UnitPrice); Assert.Equal(A, invoice.Lines[0].Id);
         }
     }

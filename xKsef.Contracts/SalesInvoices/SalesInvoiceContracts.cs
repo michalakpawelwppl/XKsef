@@ -48,6 +48,11 @@ public sealed record InvoicePartyDto
     public IReadOnlyList<InvoiceContactDto> Contacts { get; init; } = [];
     public Guid? SourceContractorId { get; init; }
     public string? Eori { get; init; }
+    public string? BuyerLinkKey { get; init; }
+    public string? CustomerNumber { get; init; }
+    public int? SellerStatus { get; init; }
+    public int TaxpayerStatus { get; init; }
+    public QualificationDecisionDto PlPrefix { get; init; } = new();
 }
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SalesInvoiceLineDto
@@ -65,6 +70,13 @@ public sealed record SalesInvoiceLineDto
     public string? Pkwiu { get; init; }
     public string? Cn { get; init; }
     public string? Gtu { get; init; }
+    public DateOnly? SaleDate { get; init; }
+    public InvoiceTaxTreatmentDto? TaxTreatment { get; init; }
+    public InvoiceExemptionBasisDto? ExemptionBasis { get; init; }
+    public int? Procedure { get; init; }
+    public string? Pkob { get; init; }
+    public QualificationDecisionDto Annex15 { get; init; } = new();
+    public ExactDecimal? ExciseAmount { get; init; }
 }
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ExchangeRateDto
@@ -100,6 +112,13 @@ public sealed record SalesInvoiceDetailsDto
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SalesInvoiceDraftDto
 {
+    public int ModelVersion { get; init; } = 1;
+    public string? IssuePlace { get; init; }
+    public int? SaleDateMode { get; init; }
+    public InvoiceSalePeriodDto? SalePeriod { get; init; }
+    public IReadOnlyList<InvoiceParticipantDto> Participants { get; init; } = [];
+    public SalesInvoiceFa3Dto Fa3 { get; init; } = new();
+    public Guid? NumberSeriesId { get; init; }
     public int Kind { get; init; }
     public DateOnly? PlannedIssueDate { get; init; }
     public DateOnly? SaleDate { get; init; }
@@ -117,11 +136,15 @@ public sealed record SalesInvoiceDraftDto
 }
 public sealed record UpdateSalesInvoiceRequest(string Version, SalesInvoiceDraftDto Draft);
 public sealed record RecalculateSalesInvoiceRequest(string Version);
+public sealed record ApproveSalesInvoiceRequest(string Version, int Revision);
+public sealed record SalesInvoiceApprovalDto(Guid Id, string ApprovedBy, DateTimeOffset ApprovedAt, int SourceRevision, int ApprovedRevision);
 public sealed record SalesInvoiceIssueDto(string Path, string Code, string Message);
+public sealed record SalesInvoiceIssuanceValidationDto(bool IsReadyForIssuance, IReadOnlyList<SalesInvoiceIssueDto> Errors, IReadOnlyList<SalesInvoiceIssueDto> Warnings);
 public sealed record SalesInvoiceTotalsDto(ExactDecimal? Net, ExactDecimal? Vat, ExactDecimal? Gross, ExactDecimal? VatPln, ExactDecimal GlobalDiscountAmount);
-public sealed record SalesInvoiceLineResultDto(Guid Id, ExactDecimal? Net, ExactDecimal? Vat, ExactDecimal? Gross, ExactDecimal? VatPln, ExactDecimal GlobalDiscountAllocation, ExactDecimal VatRoundingAdjustment);
-public sealed record SalesInvoiceTaxSummaryDto(string TaxCode, ExactDecimal Net, ExactDecimal Vat, ExactDecimal Gross, ExactDecimal VatPln);
+public sealed record SalesInvoiceLineResultDto(Guid Id, ExactDecimal? Net, ExactDecimal? Vat, ExactDecimal? Gross, ExactDecimal? VatPln, ExactDecimal GlobalDiscountAllocation, ExactDecimal VatRoundingAdjustment, int? VatAmountOrigin = null, ExactDecimal? VatBaseRoundingAdjustment = null);
+public sealed record VatCalculationDetailsDto(int Version, int Method, int Basis, ExactDecimal TaxBase, ExactDecimal Rate);
+public sealed record SalesInvoiceTaxSummaryDto(string TaxCode, ExactDecimal Net, ExactDecimal Vat, ExactDecimal Gross, ExactDecimal VatPln, VatCalculationDetailsDto? CalculationDetails = null);
 public sealed record ExchangeRateHistoryDto(ExchangeRateDto Snapshot, bool IsCurrent, DateTimeOffset CreatedAt, string CreatedBy);
-public sealed record SalesInvoiceDto(Guid Id, int Status, int Revision, string Version, SalesInvoiceDraftDto Draft, bool CalculationComplete, string CalculationVersion, SalesInvoiceTotalsDto Totals, IReadOnlyList<SalesInvoiceLineResultDto> LineResults, IReadOnlyList<SalesInvoiceTaxSummaryDto> TaxSummaries, IReadOnlyList<ExchangeRateHistoryDto> ExchangeRateHistory, IReadOnlyList<SalesInvoiceIssueDto> MissingData, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+public sealed record SalesInvoiceDto(Guid Id, int Status, int Revision, string Version, SalesInvoiceDraftDto Draft, bool CalculationComplete, string CalculationVersion, SalesInvoiceTotalsDto Totals, IReadOnlyList<SalesInvoiceLineResultDto> LineResults, IReadOnlyList<SalesInvoiceTaxSummaryDto> TaxSummaries, IReadOnlyList<ExchangeRateHistoryDto> ExchangeRateHistory, IReadOnlyList<SalesInvoiceIssueDto> MissingData, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, SalesInvoiceApprovalDto? Approval = null, string? InvoiceNumber = null, string? KsefNumber = null, Guid? FinalNumberReservationId = null, IReadOnlyList<QualificationDecisionStateDto>? QualificationDecisions = null);
 public sealed record SalesInvoiceListItemDto(Guid Id, int Status, DateOnly? PlannedIssueDate, string Currency, ExactDecimal? Net, ExactDecimal? Vat, ExactDecimal? Gross, DateTimeOffset UpdatedAt, int Revision);
 public sealed record SalesInvoiceListDto(IReadOnlyList<SalesInvoiceListItemDto> Items, int TotalCount, int Page, int PageSize);

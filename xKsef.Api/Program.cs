@@ -26,6 +26,7 @@ builder.Services.AddScoped<CredentialManagementAuthorizationFilter>();
 
 builder.Services.AddExceptionHandler<BrowserSessionExceptionHandler>();
 builder.Services.AddExceptionHandler<SalesInvoiceExceptionHandler>();
+builder.Services.AddExceptionHandler<InvoiceNumberSeriesExceptionHandler>();
 builder.Services.AddExceptionHandler<DuplicateInvoiceExceptionHandler>();
 builder.Services.AddExceptionHandler<ExternalServiceRateLimitExceptionHandler>();
 builder.Services.AddExceptionHandler<GusExceptionHandler>();

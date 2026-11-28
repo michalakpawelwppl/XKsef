@@ -37,6 +37,26 @@ public sealed class SalesInvoicesController(ISalesInvoiceService service) : Cont
         var invoice = await service.UpdateAsync(TenantId, id, UserId, Version(request.Version), SalesInvoiceContractMapper.ToDomain(request.Draft), cancellationToken);
         return Ok(SalesInvoiceContractMapper.ToDto(invoice));
     }
+    [HttpPost("{id:guid}/validate-issuance")]
+    public async Task<IActionResult> ValidateIssuance(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await service.ValidateIssuanceAsync(TenantId, id, cancellationToken);
+        return Ok(new SalesInvoiceIssuanceValidationDto(result.IsReadyForIssuance,
+            result.Errors.Select(x => new SalesInvoiceIssueDto(x.Path, x.Code, x.Message)).ToArray(),
+            result.Warnings.Select(x => new SalesInvoiceIssueDto(x.Path, x.Code, x.Message)).ToArray()));
+    }
+    [HttpPost("{id:guid}/approve")]
+    public async Task<IActionResult> Approve(Guid id, [FromBody] ApproveSalesInvoiceRequest request, CancellationToken cancellationToken)
+    {
+        var invoice = await service.ApproveAsync(TenantId, id, UserId, Version(request.Version), request.Revision, cancellationToken);
+        return Ok(SalesInvoiceContractMapper.ToDto(invoice));
+    }
+    [HttpPost("{id:guid}/unapprove")]
+    public async Task<IActionResult> Unapprove(Guid id, [FromBody] ApproveSalesInvoiceRequest request, CancellationToken cancellationToken)
+    {
+        var invoice = await service.UnapproveAsync(TenantId, id, UserId, Version(request.Version), request.Revision, cancellationToken);
+        return Ok(SalesInvoiceContractMapper.ToDto(invoice));
+    }
     [HttpPost("{id:guid}/recalculate")]
     public async Task<IActionResult> Recalculate(Guid id, [FromBody] RecalculateSalesInvoiceRequest request, CancellationToken cancellationToken)
     {

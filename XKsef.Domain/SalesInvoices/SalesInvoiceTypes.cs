@@ -2,12 +2,12 @@ namespace xKsef.Domain.SalesInvoices;
 
 public enum SalesInvoiceStatus { Draft = 0, Approved = 1, Processing = 2, Issued = 3, Rejected = 4, Cancelled = 5 }
 public enum SalesInvoiceKind { Vat = 0, Advance = 1, Final = 2, Correction = 3, AdvanceCorrection = 4, FinalCorrection = 5, Simplified = 6 }
-public enum VatCalculationMethod { PerLine = 0, ByNetTotals = 1, ByGrossTotals = 2 }
+public enum VatCalculationMethod { PerLineNet = 0, PerLineGross = 1, ByNetTotals = 2, ByGrossTotals = 3 }
 public enum PriceBasis { Net = 0, Gross = 1 }
 public enum DiscountKind { Percent = 0, Amount = 1 }
 public enum PdfPresentationLanguage { Pl = 0, En = 1, PlEn = 2 }
 public enum PartyRole { Seller = 0, Buyer = 1 }
-public enum TaxIdentifierKind { Nip = 0, EuVat = 1, Other = 2, None = 3 }
+public enum TaxIdentifierKind { Nip = 0, EuVat = 1, Other = 2, None = 3, InternalId = 4 }
 public enum ExchangeRateSource { Manual = 0, Nbp = 1, Ecb = 2 }
 public enum InvoiceReferenceKind { Correction = 0, Advance = 1 }
 
@@ -25,6 +25,12 @@ public sealed record SalesInvoicePartyData
     public IReadOnlyList<InvoiceContact> Contacts { get; init; } = [];
     public Guid? SourceContractorId { get; init; }
     public string? Eori { get; init; }
+    public string? BuyerLinkKey { get; init; }
+    public string? CustomerNumber { get; init; }
+    public SellerInformationStatus? SellerStatus { get; init; }
+    public QualificationValue TaxpayerStatus { get; init; }
+    public QualificationDecisionData PlPrefix { get; init; } = new();
+    internal SalesInvoicePartyData Freeze() => this with { Contacts = Array.AsReadOnly(Contacts.ToArray()) };
 }
 
 public sealed record SalesInvoiceLineInput
@@ -42,6 +48,13 @@ public sealed record SalesInvoiceLineInput
     public string? Pkwiu { get; init; }
     public string? Cn { get; init; }
     public string? Gtu { get; init; }
+    public DateOnly? SaleDate { get; init; }
+    public InvoiceTaxTreatmentData? TaxTreatment { get; init; }
+    public InvoiceExemptionBasisData? ExemptionBasis { get; init; }
+    public InvoiceProcedureCode? Procedure { get; init; }
+    public string? Pkob { get; init; }
+    public QualificationDecisionData Annex15 { get; init; } = new();
+    public decimal? ExciseAmount { get; init; }
 }
 
 public sealed record ExchangeRateData
@@ -78,6 +91,13 @@ public sealed record SalesInvoiceDetailsData
 
 public sealed record SalesInvoiceDraft
 {
+    public int ModelVersion { get; init; } = 1;
+    public string? IssuePlace { get; init; }
+    public SaleDateMode? SaleDateMode { get; init; }
+    public InvoiceSalePeriodData? SalePeriod { get; init; }
+    public IReadOnlyList<InvoiceParticipantData> Participants { get; init; } = [];
+    public SalesInvoiceFa3Data Fa3 { get; init; } = new();
+    public Guid? NumberSeriesId { get; init; }
     public SalesInvoiceKind Kind { get; init; }
     public DateOnly? PlannedIssueDate { get; init; }
     public DateOnly? SaleDate { get; init; }
@@ -96,12 +116,7 @@ public sealed record SalesInvoiceDraft
     public SalesInvoiceDraft Normalize() => this with
     {
         Currency = (Currency ?? "").Trim().ToUpperInvariant(),
-        GlobalDiscountBasis = VatMethod switch
-        {
-            VatCalculationMethod.ByNetTotals => PriceBasis.Net,
-            VatCalculationMethod.ByGrossTotals => PriceBasis.Gross,
-            _ => GlobalDiscountBasis
-        }
+        ModelVersion = SalesInvoiceFa3Model.HasExtendedData(this) ? Math.Max(ModelVersion, 2) : ModelVersion
     };
 }
 

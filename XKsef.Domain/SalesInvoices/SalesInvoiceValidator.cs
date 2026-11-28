@@ -11,6 +11,7 @@ public static class SalesInvoiceValidator
     {
         ArgumentNullException.ThrowIfNull(draft);
         var issues = new List<InvoiceValidationIssue>();
+        SalesInvoiceFa3Validator.Validate(draft, issues);
         void Check(bool condition, string path, string message) { if (!condition) issues.Add(new(path, "Invalid", message)); }
         void Text(string? value, int length, string path) => Check(value?.Length <= length || value is null, path, $"Maksymalna długość: {length}.");
         void Number(decimal? value, int scale, decimal max, string path) => Check(value is null || value >= 0 && value <= max && FinancialMath.HasScale(value.Value, scale), path, $"Wymagana nieujemna liczba w zakresie do {max}, skala do {scale}.");
@@ -44,24 +45,6 @@ public static class SalesInvoiceValidator
             Text(line.Description, 512, path + ".description"); Text(line.Unit, 256, path + ".unit");
             Text(line.ProductCode, 50, path + ".productCode"); Text(line.Gtin, 20, path + ".gtin"); Text(line.Pkwiu, 50, path + ".pkwiu"); Text(line.Cn, 50, path + ".cn");
             Check(line.Gtu is null || Regex.IsMatch(line.Gtu, "^GTU_(0[1-9]|1[0-3])$"), path + ".gtu", "Nieprawidłowy kod GTU.");
-        }
-        foreach (var (party, path) in new[] { (draft.Seller, "seller"), (draft.Buyer, "buyer") })
-        {
-            if (party is null) continue;
-            Text(party.Name, 512, path + ".name"); Text(party.Identifier, 50, path + ".identifier"); Text(party.Eori, 256, path + ".eori");
-            Check(Enum.IsDefined(party.IdentifierKind), path + ".identifierKind", "Nieprawidłowy rodzaj identyfikatora.");
-            Check(party.Contacts is not null && party.Contacts.Count <= 3, path + ".contacts", "Maksymalnie 3 kontakty.");
-            foreach (var contact in party.Contacts ?? [])
-            {
-                if (contact is null) { Check(false, path + ".contacts", "Kontakt nie może być null."); continue; }
-                Text(contact.Email, 255, path + ".email"); Text(contact.Phone, 16, path + ".phone");
-            }
-            foreach (var address in new[] { party.Address, party.CorrespondenceAddress })
-            {
-                if (address is null) continue;
-                Check(address.CountryCode is not null && Regex.IsMatch(address.CountryCode, "^[A-Z]{2}$"), path + ".address.countryCode", "Nieprawidłowy kraj.");
-                Text(address.Line1, 512, path + ".address.line1"); Text(address.Line2, 512, path + ".address.line2"); Text(address.Gln, 13, path + ".address.gln");
-            }
         }
         Check(draft.ExchangeRates is not null && draft.ExchangeRates.Count <= 1, "exchangeRates", "Etap 1 dopuszcza jeden ręczny kurs dokumentu.");
         foreach (var rate in draft.ExchangeRates ?? [])

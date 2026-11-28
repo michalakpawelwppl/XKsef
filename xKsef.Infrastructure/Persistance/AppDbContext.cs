@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using xKsef.Domain.Contractors;
 using xKsef.Domain.Invoices;
@@ -33,13 +33,39 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ContractorsData> ContractorsData => Set<ContractorsData>();
     public DbSet<Address> Addresses => Set<Address>();
     public DbSet<AddressesData> AddressesData => Set<AddressesData>();
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        GuardApprovalHistory();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        GuardApprovalHistory();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void GuardApprovalHistory()
+    {
+        ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<SalesInvoiceApproval>().Any(x => x.State == EntityState.Modified || x.State == EntityState.Deleted
+            && !ChangeTracker.Entries<SalesInvoice>().Any(invoice => invoice.Entity.TenantId == x.Entity.TenantId && invoice.Entity.Id == x.Entity.SalesInvoiceId
+                && invoice.State == EntityState.Modified && invoice.OriginalValues.GetValue<SalesInvoiceStatus>(nameof(SalesInvoice.Status)) == SalesInvoiceStatus.Approved
+                && invoice.Entity.Status == SalesInvoiceStatus.Draft && invoice.Entity.Approvals.Count == 0)))
+            throw new InvalidOperationException("Zatwierdzony snapshot jest niezmienny; usunięcie wymaga cofnięcia zatwierdzenia.");
+    }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
         if (Database.IsSqlServer())
         {
-            foreach (var entity in new[] { typeof(SalesInvoicePartySnapshot), typeof(SalesInvoiceDetails) })
+            modelBuilder.Entity<SalesInvoice>().ToTable(table => table.HasCheckConstraint("CK_SalesInvoices_Fa3Json", "ISJSON([Fa3]) = 1 AND JSON_VALUE([Fa3], '$.Version') IS NOT NULL AND JSON_VALUE([Fa3], '$.Version') = '1'"));
+            modelBuilder.Entity<SalesInvoiceLine>().ToTable(table => table.HasCheckConstraint("CK_SalesInvoiceLines_Annex15Json", "ISJSON([Annex15]) = 1"));
+            modelBuilder.Entity<xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesRevision>().ToTable(table => table.HasCheckConstraint("CK_InvoiceNumberSeriesHistory_Json", "ISJSON([Configuration]) = 1"));
+            modelBuilder.Entity<SalesInvoiceApproval>().ToTable(table => table.HasCheckConstraint("CK_SalesInvoiceApprovals_Snapshot", "ISJSON([SnapshotJson]) = 1"));
+            foreach (var entity in new[] { typeof(SalesInvoicePartySnapshot), typeof(SalesInvoiceDetails), typeof(SalesInvoiceParticipant) })
                 modelBuilder.Entity(entity).ToTable(table => table.HasCheckConstraint("CK_" + entity.Name + "_Json", "ISJSON([Data]) = 1"));
         }
     }

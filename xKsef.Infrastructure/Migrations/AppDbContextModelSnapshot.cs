@@ -308,6 +308,345 @@ namespace xKsef.Infrastructure.Migrations
                     b.ToTable("Contractors", (string)null);
                 });
 
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberCounter", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SeriesId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Period")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<long?>("NextValue")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<long>("StartingNumber")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("TenantId", "SeriesId", "Period");
+
+                    b.ToTable("InvoiceNumberCounters", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_InvoiceNumberCounters_Values", "[Period] BETWEEN 0 AND 9999 AND [StartingNumber] > 0 AND ([NextValue] IS NULL OR [NextValue] >= [StartingNumber])");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberReservation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApprovalId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ApprovedRevision")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("BlockedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("BlockedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset?>("ConfirmedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("EvidenceId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("FullNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("HoldsNumber")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("InvoiceVersion")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
+
+                    b.Property<DateOnly>("IssueDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("KsefNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("NormalizedNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<long>("NumericValue")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Period")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ResolvedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("SeriesId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("SeriesRevision")
+                        .HasColumnType("int");
+
+                    b.Property<int>("State")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("UncertaintyReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "InvoiceId")
+                        .IsUnique()
+                        .HasFilter("[HoldsNumber] = 1");
+
+                    b.HasIndex("TenantId", "NormalizedNumber")
+                        .IsUnique()
+                        .HasFilter("[HoldsNumber] = 1");
+
+                    b.HasIndex("TenantId", "OperationId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "SeriesId", "SeriesRevision");
+
+                    b.HasIndex("TenantId", "InvoiceId", "ApprovalId", "ApprovedRevision");
+
+                    b.HasIndex("TenantId", "SeriesId", "Period", "NumericValue")
+                        .IsUnique()
+                        .HasFilter("[HoldsNumber] = 1");
+
+                    b.ToTable("InvoiceNumberReservations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_InvoiceNumberReservations_Resolution", "([State] IN (0,3) AND [EvidenceId] IS NULL AND [KsefNumber] IS NULL AND [ResolvedAt] IS NULL AND [ResolvedBy] IS NULL AND [ConfirmedAt] IS NULL) OR ([State] IN (1,2) AND [EvidenceId] IS NOT NULL AND [ResolvedAt] IS NOT NULL AND [ResolvedBy] IS NOT NULL AND [ConfirmedAt] IS NOT NULL AND (([State] = 1 AND [KsefNumber] IS NOT NULL) OR ([State] = 2 AND [KsefNumber] IS NULL)))");
+
+                            t.HasCheckConstraint("CK_InvoiceNumberReservations_Values", "[NumericValue] > 0 AND [Period] BETWEEN 0 AND 9999 AND [State] BETWEEN 0 AND 3 AND (([State] = 2 AND [HoldsNumber] = 0) OR ([State] <> 2 AND [HoldsNumber] = 1))");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "Configuration", "xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries.Configuration#NumberSeriesConfiguration", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.Property<string>("Format")
+                                .IsRequired()
+                                .HasMaxLength(150)
+                                .HasColumnType("nvarchar(150)")
+                                .HasColumnName("Format");
+
+                            b1.Property<int>("MinimumDigits")
+                                .HasColumnType("int")
+                                .HasColumnName("MinimumDigits");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("nvarchar(100)")
+                                .HasColumnName("Name");
+
+                            b1.Property<string>("Prefix")
+                                .IsRequired()
+                                .HasMaxLength(50)
+                                .HasColumnType("nvarchar(50)")
+                                .HasColumnName("Prefix");
+
+                            b1.Property<int>("ResetMode")
+                                .HasColumnType("int")
+                                .HasColumnName("ResetMode");
+
+                            b1.Property<long>("StartingNumber")
+                                .HasColumnType("bigint")
+                                .HasColumnName("StartingNumber");
+                        });
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "NormalizedName")
+                        .IsUnique();
+
+                    b.ToTable("InvoiceNumberSeries", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_InvoiceNumberSeries_Configuration", "[MinimumDigits] BETWEEN 1 AND 19 AND [ResetMode] IN (0,1) AND [StartingNumber] > 0 AND [Revision] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesDefault", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("InvoiceKind")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("SeriesId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("TenantId", "InvoiceKind");
+
+                    b.HasIndex("TenantId", "SeriesId");
+
+                    b.ToTable("InvoiceNumberSeriesDefaults", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_InvoiceNumberSeriesDefaults_Kind", "[InvoiceKind] BETWEEN 0 AND 3");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesRevision", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SeriesId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Change")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ChangedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Configuration")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("InvoiceKind")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.HasKey("TenantId", "SeriesId", "Revision");
+
+                    b.ToTable("InvoiceNumberSeriesHistory", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_InvoiceNumberSeriesHistory_Json", "ISJSON([Configuration]) = 1");
+
+                            t.HasCheckConstraint("CK_InvoiceNumberSeriesHistory_Values", "[Revision] > 0 AND [Change] BETWEEN 0 AND 5 AND ([InvoiceKind] IS NULL OR [InvoiceKind] BETWEEN 0 AND 3)");
+                        });
+                });
+
             modelBuilder.Entity("xKsef.Domain.Invoices.StoredInvoice", b =>
                 {
                     b.Property<long>("Id")
@@ -471,6 +810,15 @@ namespace xKsef.Infrastructure.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("nvarchar(3)");
 
+                    b.Property<string>("Fa3")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("nvarchar(max)")
+                        .HasDefaultValueSql("N'{\"Version\":1}'");
+
+                    b.Property<Guid?>("FinalNumberReservationId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("GlobalDiscount")
                         .HasColumnType("nvarchar(max)");
 
@@ -485,16 +833,41 @@ namespace xKsef.Infrastructure.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("InvoiceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("IssuePlace")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
                     b.Property<int>("Kind")
                         .HasColumnType("int");
+
+                    b.Property<string>("KsefNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int>("ModelVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
 
                     b.Property<decimal?>("NetAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("NormalizedInvoiceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
                     b.Property<string>("Notes")
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid?>("NumberSeriesId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("PdfLanguage")
                         .HasColumnType("int");
@@ -514,6 +887,9 @@ namespace xKsef.Infrastructure.Migrations
 
                     b.Property<DateOnly?>("SaleDate")
                         .HasColumnType("date");
+
+                    b.Property<int?>("SaleDateMode")
+                        .HasColumnType("int");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -542,19 +918,84 @@ namespace xKsef.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("TenantId", "KsefNumber")
+                        .IsUnique()
+                        .HasFilter("[KsefNumber] IS NOT NULL");
+
+                    b.HasIndex("TenantId", "NormalizedInvoiceNumber")
+                        .IsUnique()
+                        .HasFilter("[NormalizedInvoiceNumber] IS NOT NULL");
+
+                    b.HasIndex("TenantId", "NumberSeriesId");
+
+                    b.HasIndex("TenantId", "Id", "FinalNumberReservationId");
+
                     b.HasIndex("TenantId", "Status", "PlannedIssueDate", "Id");
 
                     b.ToTable("SalesInvoices", null, t =>
                         {
-                            t.HasCheckConstraint("CK_SalesInvoices_DiscountBasis", "[GlobalDiscountBasis] IN (0,1) AND ([VatMethod] <> 1 OR [GlobalDiscountBasis] = 0) AND ([VatMethod] <> 2 OR [GlobalDiscountBasis] = 1)");
+                            t.HasCheckConstraint("CK_SalesInvoices_DiscountBasis", "[GlobalDiscountBasis] IN (0,1)");
+
+                            t.HasCheckConstraint("CK_SalesInvoices_Fa3Json", "ISJSON([Fa3]) = 1 AND JSON_VALUE([Fa3], '$.Version') IS NOT NULL AND JSON_VALUE([Fa3], '$.Version') = '1'");
+
+                            t.HasCheckConstraint("CK_SalesInvoices_FinalNumber", "([FinalNumberReservationId] IS NULL AND [InvoiceNumber] IS NULL AND [NormalizedInvoiceNumber] IS NULL AND [KsefNumber] IS NULL) OR ([FinalNumberReservationId] IS NOT NULL AND [InvoiceNumber] IS NOT NULL AND [NormalizedInvoiceNumber] IS NOT NULL AND [KsefNumber] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_SalesInvoices_Kind", "[Kind] BETWEEN 0 AND 6");
 
+                            t.HasCheckConstraint("CK_SalesInvoices_ModelVersion", "[ModelVersion] IN (1,2)");
+
                             t.HasCheckConstraint("CK_SalesInvoices_PdfLanguage", "[PdfLanguage] BETWEEN 0 AND 2");
+
+                            t.HasCheckConstraint("CK_SalesInvoices_SaleDateMode", "[SaleDateMode] IS NULL OR [SaleDateMode] BETWEEN 0 AND 5");
 
                             t.HasCheckConstraint("CK_SalesInvoices_Status", "[Status] BETWEEN 0 AND 5");
 
-                            t.HasCheckConstraint("CK_SalesInvoices_VatMethod", "[VatMethod] BETWEEN 0 AND 2");
+                            t.HasCheckConstraint("CK_SalesInvoices_VatMethod", "[VatMethod] BETWEEN 0 AND 3");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.Domain.SalesInvoices.SalesInvoiceApproval", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ApprovedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ApprovedBy")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<int>("ApprovedRevision")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SalesInvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("SourceRevision")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "SalesInvoiceId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "SalesInvoiceId", "ApprovedRevision")
+                        .IsUnique();
+
+                    b.ToTable("SalesInvoiceApprovals", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SalesInvoiceApprovals_Revisions", "[SourceRevision] > 0 AND [ApprovedRevision] = [SourceRevision] + 1");
+
+                            t.HasCheckConstraint("CK_SalesInvoiceApprovals_Snapshot", "ISJSON([SnapshotJson]) = 1");
                         });
                 });
 
@@ -672,6 +1113,12 @@ namespace xKsef.Infrastructure.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Annex15")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("nvarchar(max)")
+                        .HasDefaultValueSql("N'{}'");
+
                     b.Property<string>("Cn")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
@@ -682,6 +1129,10 @@ namespace xKsef.Infrastructure.Migrations
 
                     b.Property<string>("Discount")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("ExciseAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("GlobalDiscountAllocation")
                         .HasPrecision(18, 2)
@@ -706,11 +1157,18 @@ namespace xKsef.Infrastructure.Migrations
                     b.Property<int>("Ordinal")
                         .HasColumnType("int");
 
+                    b.Property<string>("Pkob")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<string>("Pkwiu")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
                     b.Property<int>("PriceBasis")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("Procedure")
                         .HasColumnType("int");
 
                     b.Property<string>("ProductCode")
@@ -720,6 +1178,9 @@ namespace xKsef.Infrastructure.Migrations
                     b.Property<decimal?>("Quantity")
                         .HasPrecision(22, 6)
                         .HasColumnType("decimal(22,6)");
+
+                    b.Property<DateOnly?>("SaleDate")
+                        .HasColumnType("date");
 
                     b.Property<Guid>("SalesInvoiceId")
                         .HasColumnType("uniqueidentifier");
@@ -744,7 +1205,14 @@ namespace xKsef.Infrastructure.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<int?>("VatAmountOrigin")
+                        .HasColumnType("int");
+
                     b.Property<decimal?>("VatAmountPln")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("VatBaseRoundingAdjustment")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
@@ -759,11 +1227,63 @@ namespace xKsef.Infrastructure.Migrations
 
                     b.ToTable("SalesInvoiceLines", null, t =>
                         {
+                            t.HasCheckConstraint("CK_SalesInvoiceLines_Annex15Json", "ISJSON([Annex15]) = 1");
+
                             t.HasCheckConstraint("CK_SalesInvoiceLines_Inputs", "([Quantity] IS NULL OR [Quantity] >= 0) AND ([UnitPrice] IS NULL OR [UnitPrice] >= 0)");
 
                             t.HasCheckConstraint("CK_SalesInvoiceLines_Ordinal", "[Ordinal] > 0");
 
                             t.HasCheckConstraint("CK_SalesInvoiceLines_PriceBasis", "[PriceBasis] IN (0,1)");
+
+                            t.HasCheckConstraint("CK_SalesInvoiceLines_VatOrigin", "[VatAmountOrigin] IS NULL OR [VatAmountOrigin] IN (0,1)");
+                        });
+                });
+
+            modelBuilder.Entity("xKsef.Domain.SalesInvoices.SalesInvoiceParticipant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Data")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Ordinal")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OtherRoleDescription")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int?>("Role")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SalesInvoiceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("SharePercent")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "SalesInvoiceId", "Id");
+
+                    b.HasIndex("TenantId", "SalesInvoiceId", "Ordinal")
+                        .IsUnique();
+
+                    b.ToTable("SalesInvoiceParticipants", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SalesInvoiceParticipant_Json", "ISJSON([Data]) = 1");
+
+                            t.HasCheckConstraint("CK_SalesInvoiceParticipants_Ordinal", "[Ordinal] > 0");
+
+                            t.HasCheckConstraint("CK_SalesInvoiceParticipants_Role", "[Role] IS NULL OR [Role] BETWEEN 0 AND 11");
+
+                            t.HasCheckConstraint("CK_SalesInvoiceParticipants_Share", "[SharePercent] IS NULL OR [SharePercent] BETWEEN 0 AND 100");
                         });
                 });
 
@@ -845,6 +1365,9 @@ namespace xKsef.Infrastructure.Migrations
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CalculationDetails")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("GrossAmount")
                         .HasPrecision(18, 2)
@@ -1187,6 +1710,74 @@ namespace xKsef.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberCounter", b =>
+                {
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SeriesId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberReservation", b =>
+                {
+                    b.HasOne("xKsef.Domain.SalesInvoices.SalesInvoice", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "InvoiceId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberCounter", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SeriesId", "Period")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesRevision", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "SeriesId", "SeriesRevision")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("xKsef.Domain.SalesInvoices.SalesInvoiceApproval", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "InvoiceId", "ApprovalId", "ApprovedRevision")
+                        .HasPrincipalKey("TenantId", "SalesInvoiceId", "Id", "ApprovedRevision")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", b =>
+                {
+                    b.HasOne("xKsef.Domain.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesDefault", b =>
+                {
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", null)
+                        .WithMany("Defaults")
+                        .HasForeignKey("TenantId", "SeriesId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesRevision", b =>
+                {
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", null)
+                        .WithMany("History")
+                        .HasForeignKey("TenantId", "SeriesId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("xKsef.Domain.Invoices.StoredInvoice", b =>
                 {
                     b.HasOne("xKsef.Domain.Tenants.Tenant", null)
@@ -1222,6 +1813,55 @@ namespace xKsef.Infrastructure.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "NumberSeriesId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberReservation", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "Id", "FinalNumberReservationId")
+                        .HasPrincipalKey("TenantId", "InvoiceId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.OwnsOne("xKsef.Domain.SalesInvoices.InvoiceSalePeriodData", "SalePeriod", b1 =>
+                        {
+                            b1.Property<Guid>("SalesInvoiceId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<DateOnly?>("From")
+                                .HasColumnType("date")
+                                .HasColumnName("SalePeriodFrom");
+
+                            b1.Property<DateOnly?>("To")
+                                .HasColumnType("date")
+                                .HasColumnName("SalePeriodTo");
+
+                            b1.Property<int>("Version")
+                                .HasColumnType("int")
+                                .HasColumnName("SalePeriodVersion");
+
+                            b1.HasKey("SalesInvoiceId");
+
+                            b1.ToTable("SalesInvoices");
+
+                            b1.WithOwner()
+                                .HasForeignKey("SalesInvoiceId");
+                        });
+
+                    b.Navigation("SalePeriod");
+                });
+
+            modelBuilder.Entity("xKsef.Domain.SalesInvoices.SalesInvoiceApproval", b =>
+                {
+                    b.HasOne("xKsef.Domain.SalesInvoices.SalesInvoice", null)
+                        .WithMany("Approvals")
+                        .HasForeignKey("TenantId", "SalesInvoiceId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("xKsef.Domain.SalesInvoices.SalesInvoiceDetails", b =>
@@ -1248,6 +1888,82 @@ namespace xKsef.Infrastructure.Migrations
                 {
                     b.HasOne("xKsef.Domain.SalesInvoices.SalesInvoice", null)
                         .WithMany("Lines")
+                        .HasForeignKey("TenantId", "SalesInvoiceId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.OwnsOne("xKsef.Domain.SalesInvoices.InvoiceExemptionBasisData", "ExemptionBasis", b1 =>
+                        {
+                            b1.Property<Guid>("SalesInvoiceLineId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<int?>("Kind")
+                                .HasColumnType("int")
+                                .HasColumnName("ExemptionBasisKind");
+
+                            b1.Property<string>("Text")
+                                .HasMaxLength(256)
+                                .HasColumnType("nvarchar(256)")
+                                .HasColumnName("ExemptionBasisText");
+
+                            b1.Property<int>("Version")
+                                .HasColumnType("int")
+                                .HasColumnName("ExemptionBasisVersion");
+
+                            b1.HasKey("SalesInvoiceLineId");
+
+                            b1.ToTable("SalesInvoiceLines");
+
+                            b1.WithOwner()
+                                .HasForeignKey("SalesInvoiceLineId");
+                        });
+
+                    b.OwnsOne("xKsef.Domain.SalesInvoices.InvoiceTaxTreatmentData", "TaxTreatment", b1 =>
+                        {
+                            b1.Property<Guid>("SalesInvoiceLineId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<string>("DomesticRateCode")
+                                .HasMaxLength(2)
+                                .HasColumnType("nvarchar(2)")
+                                .HasColumnName("DomesticRateCode");
+
+                            b1.Property<decimal?>("ForeignVatRate")
+                                .HasPrecision(9, 6)
+                                .HasColumnType("decimal(9,6)")
+                                .HasColumnName("ForeignVatRate");
+
+                            b1.Property<int?>("Kind")
+                                .HasColumnType("int")
+                                .HasColumnName("TaxTreatmentKind");
+
+                            b1.Property<string>("TaxCountryCode")
+                                .HasMaxLength(2)
+                                .HasColumnType("nvarchar(2)")
+                                .HasColumnName("TaxCountryCode");
+
+                            b1.Property<int>("Version")
+                                .HasColumnType("int")
+                                .HasColumnName("TaxTreatmentVersion");
+
+                            b1.HasKey("SalesInvoiceLineId");
+
+                            b1.ToTable("SalesInvoiceLines");
+
+                            b1.WithOwner()
+                                .HasForeignKey("SalesInvoiceLineId");
+                        });
+
+                    b.Navigation("ExemptionBasis");
+
+                    b.Navigation("TaxTreatment");
+                });
+
+            modelBuilder.Entity("xKsef.Domain.SalesInvoices.SalesInvoiceParticipant", b =>
+                {
+                    b.HasOne("xKsef.Domain.SalesInvoices.SalesInvoice", null)
+                        .WithMany("Participants")
                         .HasForeignKey("TenantId", "SalesInvoiceId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1331,14 +2047,25 @@ namespace xKsef.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries", b =>
+                {
+                    b.Navigation("Defaults");
+
+                    b.Navigation("History");
+                });
+
             modelBuilder.Entity("xKsef.Domain.SalesInvoices.SalesInvoice", b =>
                 {
+                    b.Navigation("Approvals");
+
                     b.Navigation("Details")
                         .IsRequired();
 
                     b.Navigation("ExchangeRates");
 
                     b.Navigation("Lines");
+
+                    b.Navigation("Participants");
 
                     b.Navigation("Parties");
 

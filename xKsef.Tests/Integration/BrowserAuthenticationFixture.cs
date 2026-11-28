@@ -95,7 +95,7 @@ public sealed partial class BrowserAuthenticationTests
                     services.AddApiAuthentication(Configuration, context.HostingEnvironment);
                     services.AddRegistrationRateLimiting();
                     services.AddRateLimiter(options => { options.RejectionStatusCode = 429; options.AddFixedWindowLimiter("login", limiter => { limiter.PermitLimit = 5; limiter.Window = TimeSpan.FromMinutes(1); limiter.QueueLimit = 0; }); });
-                    services.AddExceptionHandler<BrowserSessionExceptionHandler>(); services.AddExceptionHandler<GusExceptionHandler>(); services.AddExceptionHandler<SalesInvoiceExceptionHandler>(); services.AddProblemDetails();
+                    services.AddExceptionHandler<BrowserSessionExceptionHandler>(); services.AddExceptionHandler<GusExceptionHandler>(); services.AddExceptionHandler<SalesInvoiceExceptionHandler>(); services.AddExceptionHandler<InvoiceNumberSeriesExceptionHandler>(); services.AddProblemDetails();
                     services.AddHttpClient("CredentialService").ConfigurePrimaryHttpMessageHandler(() => new RejectExternalCalls());
                     services.AddScoped<ICredentialServiceClient, CredentialServiceClient>();
                 }).Configure(app =>
@@ -128,7 +128,12 @@ public sealed partial class BrowserAuthenticationTests
                 {
                     using var scope = Scope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     await db.Invoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
+                    await db.SalesInvoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteUpdateAsync(s => s.SetProperty(x => x.FinalNumberReservationId, (Guid?)null).SetProperty(x => x.InvoiceNumber, (string?)null).SetProperty(x => x.NormalizedInvoiceNumber, (string?)null).SetProperty(x => x.KsefNumber, (string?)null));
+                    await db.Set<xKsef.Domain.InvoiceNumberSeries.InvoiceNumberReservation>().Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
+                    await db.Set<xKsef.Domain.InvoiceNumberSeries.InvoiceNumberCounter>().Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
                     await db.SalesInvoices.Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
+                    await db.Set<xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeriesDefault>().Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
+                    await db.Set<xKsef.Domain.InvoiceNumberSeries.InvoiceNumberSeries>().Where(row => _tenants.Contains(row.TenantId)).ExecuteDeleteAsync();
                     var contractors = db.Contractors.Where(row => _tenants.Contains(row.TenantId));
                     var contractorData = db.ContractorsData.Where(row => contractors.Any(contractor => contractor.Id == row.ContractorId));
                     var addresses = db.Addresses.Where(row => contractorData.Any(data => data.Id == row.ContractorsDataId));
