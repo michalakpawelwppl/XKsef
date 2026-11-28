@@ -37,8 +37,13 @@ public static class ApprovedSalesInvoiceComparison
         // the applied amount is captured from validated inputs and must never be recomputed during numbering.
         var persisted = document.Calculations is { Lines: not null } c
             ? c with { Lines = Array.AsReadOnly(c.Lines.Select(x => x with { LineDiscount = null }).ToArray()) } : document.Calculations;
+        var currentInput = SalesInvoiceSnapshotCapture.Input(invoice);
+        // Historical JSON has no factor collection. Accept its absence only when the persisted invoice has none.
+        // Keep the reader's null (unknown/not captured) intact; never hide an actual factor account change.
+        if (document.Input?.Details?.FactorBankAccounts is null && currentInput.Details?.FactorBankAccounts is { Count: 0 })
+            currentInput = currentInput with { Details = currentInput.Details with { FactorBankAccounts = null } };
         return document.CalculatorVersion == invoice.CalculationVersion
-            && SalesInvoiceSnapshotJson.Same(document.Input, SalesInvoiceSnapshotCapture.Input(invoice))
+            && SalesInvoiceSnapshotJson.Same(document.Input, currentInput)
             && SalesInvoiceSnapshotJson.Same(persisted, SalesInvoiceSnapshotCapture.Calculations(invoice));
     }
 }

@@ -151,11 +151,7 @@ public sealed class SalesInvoiceIssuanceValidator(SalesInvoiceCalculator calcula
             XmlText(draft.Details.AdditionalDescriptions[i].Value, $"details.additionalDescriptions[{i}].value");
         }
         XmlText(draft.Notes, "notes"); XmlText(draft.Details.OtherPaymentDescription, "details.otherPaymentDescription");
-        for (var i = 0; i < draft.Details.BankAccounts.Count; i++)
-        {
-            var account = draft.Details.BankAccounts[i]; var path = $"details.bankAccounts[{i}]";
-            XmlText(account.Number, path + ".number"); XmlText(account.Swift, path + ".swift"); XmlText(account.BankName, path + ".bankName"); XmlText(account.Description, path + ".description");
-        }
+        // Both account collections (including XML characters) are checked by the shared domain validator above.
         return new(errors.Distinct().ToArray(), warnings.ToArray(), expected);
     }
 

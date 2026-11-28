@@ -98,7 +98,7 @@ public sealed record ExchangeRateDto
     public Guid? OriginalSnapshotId { get; init; }
 }
 public sealed record PaymentTermDto(DateOnly? DueDate, int? Quantity = null, string? Unit = null, string? StartingEvent = null);
-public sealed record BankAccountDto(string Number, string? Swift = null, string? BankName = null, string? Description = null);
+public sealed record BankAccountDto(string Number, string? Swift = null, string? BankName = null, string? Description = null, int? BankOwnAccountType = null);
 public sealed record AdditionalDescriptionDto(string Key, string Value, Guid? LineId = null);
 public sealed record SalesInvoiceDetailsDto
 {
@@ -107,6 +107,7 @@ public sealed record SalesInvoiceDetailsDto
     public string? OtherPaymentDescription { get; init; }
     public IReadOnlyList<PaymentTermDto> PaymentTerms { get; init; } = [];
     public IReadOnlyList<BankAccountDto> BankAccounts { get; init; } = [];
+    public IReadOnlyList<BankAccountDto> FactorBankAccounts { get; init; } = [];
     public IReadOnlyList<AdditionalDescriptionDto> AdditionalDescriptions { get; init; } = [];
 }
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

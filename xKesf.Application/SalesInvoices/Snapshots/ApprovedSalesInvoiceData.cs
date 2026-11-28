@@ -97,7 +97,7 @@ public sealed record ApprovedExchangeRate
     public Guid? OriginalSnapshotId { get; init; }
 }
 public sealed record ApprovedPaymentTerm(DateOnly? DueDate, int? Quantity = null, string? Unit = null, string? StartingEvent = null);
-public sealed record ApprovedBankAccount(string? Number, string? Swift = null, string? BankName = null, string? Description = null);
+public sealed record ApprovedBankAccount(string? Number, string? Swift = null, string? BankName = null, string? Description = null, int? BankOwnAccountType = null);
 public sealed record ApprovedAdditionalDescription(string? Key, string? Value, Guid? LineId = null);
 public sealed record ApprovedSalesInvoiceDetails
 {
@@ -106,6 +106,7 @@ public sealed record ApprovedSalesInvoiceDetails
     public string? OtherPaymentDescription { get; init; }
     public IReadOnlyList<ApprovedPaymentTerm>? PaymentTerms { get; init; }
     public IReadOnlyList<ApprovedBankAccount>? BankAccounts { get; init; }
+    public IReadOnlyList<ApprovedBankAccount>? FactorBankAccounts { get; init; }
     public IReadOnlyList<ApprovedAdditionalDescription>? AdditionalDescriptions { get; init; }
 }
 public sealed record ApprovedSalesInvoiceDraft

@@ -8,9 +8,9 @@ public static partial class SalesInvoiceContractMapper
 {
     public static SalesInvoiceDraft ToDomain(SalesInvoiceDraftDto dto)
     {
-        if (dto is null || dto.Participants is null || dto.Participants.Any(x => x is null) || dto.Fa3 is null || dto.Fa3.Qualifications is null || dto.Fa3.WarehouseDocumentNumbers is null || dto.Lines is null || dto.ExchangeRates is null || dto.Details is null || dto.Details.PaymentTerms is null || dto.Details.BankAccounts is null || dto.Details.AdditionalDescriptions is null)
+        if (dto is null || dto.Participants is null || dto.Participants.Any(x => x is null) || dto.Fa3 is null || dto.Fa3.Qualifications is null || dto.Fa3.WarehouseDocumentNumbers is null || dto.Lines is null || dto.ExchangeRates is null || dto.Details is null || dto.Details.PaymentTerms is null || dto.Details.BankAccounts is null || dto.Details.FactorBankAccounts is null || dto.Details.AdditionalDescriptions is null)
             throw Invalid();
-        if (dto.Lines.Any(x => x is null) || dto.ExchangeRates.Any(x => x is null) || dto.Details.PaymentTerms.Any(x => x is null) || dto.Details.BankAccounts.Any(x => x is null) || dto.Details.AdditionalDescriptions.Any(x => x is null)) throw Invalid();
+        if (dto.Lines.Any(x => x is null) || dto.ExchangeRates.Any(x => x is null) || dto.Details.PaymentTerms.Any(x => x is null) || dto.Details.BankAccounts.Any(x => x is null) || dto.Details.FactorBankAccounts.Any(x => x is null) || dto.Details.AdditionalDescriptions.Any(x => x is null)) throw Invalid();
         return new()
         {
             ModelVersion = dto.ModelVersion, IssuePlace = dto.IssuePlace, SaleDateMode = (SaleDateMode?)dto.SaleDateMode, SalePeriod = dto.SalePeriod is null ? null : new(dto.SalePeriod.From, dto.SalePeriod.To), Participants = dto.Participants.Select(Participant).ToArray(), Fa3 = Fa3(dto.Fa3), NumberSeriesId = dto.NumberSeriesId, Kind = (SalesInvoiceKind)dto.Kind, PlannedIssueDate = dto.PlannedIssueDate, SaleDate = dto.SaleDate, Currency = dto.Currency,
@@ -20,7 +20,8 @@ public static partial class SalesInvoiceContractMapper
             ExchangeRates = dto.ExchangeRates.Select(x => new ExchangeRateData { Id = x.Id, FromCurrency = x.FromCurrency, ToCurrency = x.ToCurrency, Rate = x.Rate.Value, QuotedUnits = x.QuotedUnits.Value, OriginalRate = x.OriginalRate?.Value, Source = (ExchangeRateSource)x.Source, SourceReference = x.SourceReference, RateDate = x.RateDate, ReferenceDate = x.ReferenceDate, SelectionRule = x.SelectionRule, RetrievedAt = x.RetrievedAt, IsManualOverride = x.IsManualOverride, OverrideReason = x.OverrideReason, OriginalSnapshotId = x.OriginalSnapshotId }).ToArray(),
             Details = new() { Version = dto.Details.Version, PaymentMethod = dto.Details.PaymentMethod, OtherPaymentDescription = dto.Details.OtherPaymentDescription,
                 PaymentTerms = dto.Details.PaymentTerms.Select(x => new InvoicePaymentTerm(x.DueDate, x.Quantity, x.Unit, x.StartingEvent)).ToArray(),
-                BankAccounts = dto.Details.BankAccounts.Select(x => new InvoiceBankAccount(x.Number, x.Swift, x.BankName, x.Description)).ToArray(),
+                BankAccounts = dto.Details.BankAccounts.Select(Account).ToArray(),
+                FactorBankAccounts = dto.Details.FactorBankAccounts.Select(Account).ToArray(),
                 AdditionalDescriptions = dto.Details.AdditionalDescriptions.Select(x => new InvoiceAdditionalDescription(x.Key, x.Value, x.LineId)).ToArray() }
         };
     }
@@ -44,8 +45,10 @@ public static partial class SalesInvoiceContractMapper
         Seller = Party(x.Seller), Buyer = Party(x.Buyer),
         Lines = x.Lines.Select(l => new SalesInvoiceLineDto { Id = l.Id, Description = l.Description, Unit = l.Unit, Quantity = Exact(l.Quantity), UnitPrice = Exact(l.UnitPrice), PriceBasis = (int)l.PriceBasis, TaxCode = l.TaxCode, Discount = Discount(l.Discount), ProductCode = l.ProductCode, Gtin = l.Gtin, Pkwiu = l.Pkwiu, Cn = l.Cn, Gtu = l.Gtu, SaleDate = l.SaleDate, TaxTreatment = TaxTreatment(l.TaxTreatment), ExemptionBasis = Basis(l.ExemptionBasis), Procedure = (int?)l.Procedure, Pkob = l.Pkob, Annex15 = Decision(l.Annex15), ExciseAmount = Exact(l.ExciseAmount) }).ToArray(),
         ExchangeRates = x.ExchangeRates.Select(Rate).ToArray(), Details = new() { Version = x.Details.Version, PaymentMethod = x.Details.PaymentMethod, OtherPaymentDescription = x.Details.OtherPaymentDescription,
-            PaymentTerms = x.Details.PaymentTerms.Select(t => new PaymentTermDto(t.DueDate, t.Quantity, t.Unit, t.StartingEvent)).ToArray(), BankAccounts = x.Details.BankAccounts.Select(b => new BankAccountDto(b.Number, b.Swift, b.BankName, b.Description)).ToArray(), AdditionalDescriptions = x.Details.AdditionalDescriptions.Select(d => new AdditionalDescriptionDto(d.Key, d.Value, d.LineId)).ToArray() }
+            PaymentTerms = x.Details.PaymentTerms.Select(t => new PaymentTermDto(t.DueDate, t.Quantity, t.Unit, t.StartingEvent)).ToArray(), BankAccounts = x.Details.BankAccounts.Select(Account).ToArray(), FactorBankAccounts = x.Details.FactorBankAccounts.Select(Account).ToArray(), AdditionalDescriptions = x.Details.AdditionalDescriptions.Select(d => new AdditionalDescriptionDto(d.Key, d.Value, d.LineId)).ToArray() }
     };
+    private static InvoiceBankAccount Account(BankAccountDto x) => new(x.Number, x.Swift, x.BankName, x.Description, (BankOwnAccountType?)x.BankOwnAccountType);
+    private static BankAccountDto Account(InvoiceBankAccount x) => new(x.Number, x.Swift, x.BankName, x.Description, (int?)x.BankOwnAccountType);
     private static ExchangeRateDto Rate(ExchangeRateData x) => new() { Id = x.Id, FromCurrency = x.FromCurrency, ToCurrency = x.ToCurrency, Rate = x.Rate, QuotedUnits = x.QuotedUnits, OriginalRate = Exact(x.OriginalRate), Source = (int)x.Source, SourceReference = x.SourceReference, RateDate = x.RateDate, ReferenceDate = x.ReferenceDate, SelectionRule = x.SelectionRule, RetrievedAt = x.RetrievedAt, IsManualOverride = x.IsManualOverride, OverrideReason = x.OverrideReason, OriginalSnapshotId = x.OriginalSnapshotId };
     private static InvoiceDiscount? Discount(DiscountDto? x) => x is null ? null : new((DiscountKind)x.Kind, x.Value.Value);
     private static DiscountDto? Discount(InvoiceDiscount? x) => x is null ? null : new((int)x.Kind, x.Value);

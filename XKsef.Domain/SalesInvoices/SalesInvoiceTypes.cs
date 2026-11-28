@@ -77,7 +77,9 @@ public sealed record ExchangeRateData
 }
 
 public sealed record InvoicePaymentTerm(DateOnly? DueDate, int? Quantity = null, string? Unit = null, string? StartingEvent = null);
-public sealed record InvoiceBankAccount(string Number, string? Swift = null, string? BankName = null, string? Description = null);
+// FA(3) TRachunekWlasnyBanku; omission is distinct from each of its three meanings.
+public enum BankOwnAccountType { PurchasedReceivables = 1, CollectionsForSupplier = 2, OwnOperationsNonSettlement = 3 }
+public sealed record InvoiceBankAccount(string Number, string? Swift = null, string? BankName = null, string? Description = null, BankOwnAccountType? BankOwnAccountType = null);
 public sealed record InvoiceAdditionalDescription(string Key, string Value, Guid? LineId = null);
 public sealed record SalesInvoiceDetailsData
 {
@@ -86,6 +88,7 @@ public sealed record SalesInvoiceDetailsData
     public string? OtherPaymentDescription { get; init; }
     public IReadOnlyList<InvoicePaymentTerm> PaymentTerms { get; init; } = [];
     public IReadOnlyList<InvoiceBankAccount> BankAccounts { get; init; } = [];
+    public IReadOnlyList<InvoiceBankAccount> FactorBankAccounts { get; init; } = [];
     public IReadOnlyList<InvoiceAdditionalDescription> AdditionalDescriptions { get; init; } = [];
 }
 

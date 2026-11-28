@@ -75,13 +75,8 @@ public static class SalesInvoiceValidator
                 Check(term.Quantity is null or > 0, "details.paymentTerms.quantity", "Ilość musi być dodatnia.");
                 Text(term.Unit, 50, "details.paymentTerms.unit"); Text(term.StartingEvent, 256, "details.paymentTerms.startingEvent");
             }
-            Check(details.BankAccounts is not null && details.BankAccounts.Count <= 100, "details.bankAccounts", "Maksymalnie 100 rachunków.");
-            foreach (var account in details.BankAccounts ?? [])
-            {
-                if (account is null) { Check(false, "details.bankAccounts", "Rachunek nie może być null."); continue; }
-                Check(account.Number is not null && account.Number.Length is >= 10 and <= 34, "details.bankAccounts.number", "Numer rachunku musi zawierać 10–34 znaki.");
-                Text(account.Swift, 11, "details.bankAccounts.swift"); Text(account.BankName, 256, "details.bankAccounts.bankName"); Text(account.Description, 256, "details.bankAccounts.description");
-            }
+            InvoiceBankAccountValidator.Validate(details.BankAccounts, 100, "details.bankAccounts", issues);
+            InvoiceBankAccountValidator.Validate(details.FactorBankAccounts, 20, "details.factorBankAccounts", issues);
             Check(details.AdditionalDescriptions is not null && details.AdditionalDescriptions.Count <= 10000, "details.additionalDescriptions", "Maksymalnie 10000 opisów.");
             foreach (var description in details.AdditionalDescriptions ?? [])
             {

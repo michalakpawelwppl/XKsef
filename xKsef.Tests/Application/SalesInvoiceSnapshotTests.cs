@@ -13,7 +13,7 @@ public sealed class SalesInvoiceSnapshotTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 28, 12, 0, 0, TimeSpan.Zero);
     private static ISalesInvoiceApprovalSnapshotReader Reader => new SalesInvoiceApprovalSnapshotReader();
-    private static SalesInvoice Create(VatCalculationMethod method = VatCalculationMethod.ByNetTotals)
+    private static SalesInvoice Create(VatCalculationMethod method = VatCalculationMethod.ByNetTotals, SalesInvoiceDetailsData? details = null)
     {
         var a = Guid.Parse("00000000-0000-0000-0000-000000000003"); var b = Guid.Parse("00000000-0000-0000-0000-000000000001");
         var party = new SalesInvoicePartyData { Name = "Nabywca", IdentifierKind = TaxIdentifierKind.None, SourceContractorId = Guid.NewGuid(), BuyerLinkKey = "KEY", CustomerNumber = "KL-1",
@@ -35,7 +35,7 @@ public sealed class SalesInvoiceSnapshotTests
             ExchangeRates = [new() { Id = Guid.NewGuid(), FromCurrency = "EUR", Rate = 4.123456789012m, QuotedUnits = 1, Source = ExchangeRateSource.Manual,
                 SourceReference = "Tabela", RateDate = new(2026, 11, 27), ReferenceDate = new(2026, 11, 28), SelectionRule = "Ręczny" }],
             GlobalDiscount = new(DiscountKind.Percent, 2), GlobalDiscountBasis = PriceBasis.Gross, Notes = "Żółć & <opis>",
-            Details = new() { PaymentMethod = 6, PaymentTerms = [new(new(2026, 12, 15))], BankAccounts = [new("12345678901234567890123456", "ABCDEFGH", "Bank", "Opis")], AdditionalDescriptions = [new("Klucz", "Wartość", a)] }
+            Details = details ?? new() { PaymentMethod = 6, PaymentTerms = [new(new(2026, 12, 15))], BankAccounts = [new("12345678901234567890123456", "ABCDEFGH", "Bank", "Opis")], AdditionalDescriptions = [new("Klucz", "Wartość", a)] }
         }, "creator", Now, new());
         typeof(SalesInvoice).GetProperty(nameof(SalesInvoice.RowVersion))!.SetValue(invoice, new byte[8]);
         return invoice;
@@ -120,6 +120,59 @@ public sealed class SalesInvoiceSnapshotTests
         Assert.Null(snapshot.Input!.Notes); Assert.Null(snapshot.Input.Buyer!.TaxpayerStatus); Assert.Null(snapshot.Input.Lines![0].ExciseAmount);
         Assert.Null(snapshot.Input.Fa3!.Qualifications!.Article42Paragraph5Applies);
         Assert.Equal(12.34567891m, snapshot.Input.Lines[0].UnitPrice!.Value.Value);
+    }
+
+    [Fact]
+    public void BankAccountSnapshotKeepsBothCollectionsTypesAndOrderWithoutDependingOnLaterData()
+    {
+        var seller = new InvoiceBankAccount("seller/123", "WBKPPLPP", "Bank sprzedawcy", "Opis", BankOwnAccountType.PurchasedReceivables);
+        var factor = new InvoiceBankAccount("factor/123", "ABCDEFGH123", "Bank faktora", "Faktoring", BankOwnAccountType.CollectionsForSupplier);
+        var invoice = Create(details: new() { BankAccounts = [seller], FactorBankAccounts = [factor, new("other/1234", BankOwnAccountType: BankOwnAccountType.OwnOperationsNonSettlement)] });
+        var draft = invoice.ToDraft();
+        var validation = new SalesInvoiceIssuanceValidator(new()).Validate(invoice);
+        Assert.True(validation.IsReadyForIssuance, JsonSerializer.Serialize(validation.Errors));
+        var row = Approve(invoice); var original = row.SnapshotJson; var snapshot = Reader.Read(row);
+        Assert.Equal(1, Assert.Single(snapshot.Input!.Details!.BankAccounts!).BankOwnAccountType);
+        Assert.Equal(new int?[] { 2, 3 }, snapshot.Input.Details.FactorBankAccounts!.Select(x => x.BankOwnAccountType));
+        Assert.Equal("Bank faktora", snapshot.Input.Details.FactorBankAccounts![0].BankName);
+        Assert.Equal("ABCDEFGH123", snapshot.Input.Details.FactorBankAccounts![0].Swift);
+        Assert.True(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+        var projected = snapshot.Disclosure!.Fields!.Single(x => x.Path == "Details").Value!.Value;
+        Assert.Equal(2, projected.GetProperty("FactorBankAccounts")[0].GetProperty("BankOwnAccountType").GetInt32());
+        Assert.Throws<NotSupportedException>(() => ((IList<ApprovedBankAccount>)snapshot.Input.Details.FactorBankAccounts).Clear());
+        typeof(SalesInvoiceDetails).GetProperty(nameof(SalesInvoiceDetails.Data))!.SetValue(invoice.Details, draft.Details with { FactorBankAccounts = [] });
+        Assert.False(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+        Assert.Equal("factor/123", Reader.Read(row).Input!.Details!.FactorBankAccounts![0].Number);
+        Assert.Equal(original, row.SnapshotJson);
+    }
+
+    [Fact]
+    public void HistoricalBankAccountJsonRemainsReadableAndComparableWithoutInventingMissingValues()
+    {
+        var invoice = Create(); var row = Approve(invoice); var json = JsonNode.Parse(row.SnapshotJson)!;
+        var details = json["Input"]!["Details"]!;
+        details.AsObject().Remove("FactorBankAccounts");
+        foreach (var account in details["BankAccounts"]!.AsArray()) account!.AsObject().Remove("BankOwnAccountType");
+        typeof(SalesInvoiceApproval).GetProperty(nameof(SalesInvoiceApproval.SnapshotJson))!.SetValue(row, json.ToJsonString());
+        var before = row.SnapshotJson; var snapshot = Reader.Read(row);
+        Assert.Null(snapshot.Input!.Details!.FactorBankAccounts);
+        Assert.Null(Assert.Single(snapshot.Input.Details.BankAccounts!).BankOwnAccountType);
+        Assert.True(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+        Assert.Equal(before, row.SnapshotJson);
+        typeof(SalesInvoiceDetails).GetProperty(nameof(SalesInvoiceDetails.Data))!.SetValue(invoice.Details, invoice.ToDraft().Details with { FactorBankAccounts = [new("factor/123")] });
+        Assert.False(ApprovedSalesInvoiceComparison.Matches(invoice, snapshot));
+    }
+
+    [Fact]
+    public void IssuanceValidationAlsoChecksPersistedBankAccountData()
+    {
+        var invoice = Create();
+        typeof(SalesInvoiceDetails).GetProperty(nameof(SalesInvoiceDetails.Data))!.SetValue(invoice.Details, invoice.ToDraft().Details with
+        { FactorBankAccounts = [new("1234567890", "invalid", BankOwnAccountType: (BankOwnAccountType)0)] });
+        var validation = new SalesInvoiceIssuanceValidator(new()).Validate(invoice);
+        Assert.False(validation.IsReadyForIssuance);
+        Assert.Contains(validation.Errors, x => x.Path == "details.factorBankAccounts[0].swift" && x.Code == "BankAccountSwiftInvalid");
+        Assert.Contains(validation.Errors, x => x.Path == "details.factorBankAccounts[0].bankOwnAccountType" && x.Code == "BankOwnAccountTypeInvalid");
     }
 
     [Theory]
